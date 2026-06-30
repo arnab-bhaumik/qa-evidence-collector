@@ -1,0 +1,241 @@
+from PySide6.QtWidgets import (
+    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,
+)
+from PySide6.QtCore import Qt, QPoint, QTimer
+
+from qa_evidence_collector.core.session_manager import SessionManager
+from qa_evidence_collector.services.screenshot_service import ScreenshotService
+from qa_evidence_collector.ui.new_session_dialog import NewSessionDialog
+from qa_evidence_collector.ui.note_dialog import NoteDialog
+from qa_evidence_collector.ui.step_list_view import StepListView
+from qa_evidence_collector.services.report_service import ReportService
+
+
+class FloatingToolbar(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self._session = SessionManager()
+        self._screenshot_svc = ScreenshotService()
+        self._report_svc = ReportService()
+
+        self._drag_pos: QPoint | None = None
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setFixedHeight(64)
+        self.setMinimumWidth(420)
+
+        self._build_ui()
+        self._apply_style()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Title bar (drag handle)
+        title_bar = QWidget()
+        title_bar.setObjectName("titleBar")
+        title_bar.setFixedHeight(20)
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(8, 0, 8, 0)
+
+        title_label = QLabel("QA Evidence Collector")
+        title_label.setObjectName("titleLabel")
+        title_layout.addWidget(title_label)
+        title_layout.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("closeBtn")
+        close_btn.setFixedSize(16, 16)
+        close_btn.clicked.connect(self.close)
+        title_layout.addWidget(close_btn)
+
+        root.addWidget(title_bar)
+
+        # Button row
+        btn_row = QWidget()
+        btn_row.setObjectName("btnRow")
+        btn_layout = QHBoxLayout(btn_row)
+        btn_layout.setContentsMargins(8, 4, 8, 4)
+        btn_layout.setSpacing(6)
+
+        self.btn_new = self._make_button("New Session", "#27ae60")
+        self.btn_capture = self._make_button("Capture Step", "#2980b9")
+        self.btn_capture.setEnabled(False)
+        self.btn_steps = self._make_button("View Steps", "#8e44ad")
+        self.btn_steps.setEnabled(False)
+        self.btn_report = self._make_button("Generate Report", "#e67e22")
+        self.btn_report.setEnabled(False)
+        self.btn_settings = self._make_button("Settings", "#7f8c8d")
+
+        for btn in (
+            self.btn_new,
+            self.btn_capture,
+            self.btn_steps,
+            self.btn_report,
+            self.btn_settings,
+        ):
+            btn_layout.addWidget(btn)
+
+        root.addWidget(btn_row)
+
+        # Connections
+        self.btn_new.clicked.connect(self._on_new_session)
+        self.btn_capture.clicked.connect(self._on_capture_step)
+        self.btn_steps.clicked.connect(self._on_view_steps)
+        self.btn_report.clicked.connect(self._on_generate_report)
+        self.btn_settings.clicked.connect(self._on_settings)
+
+    def _make_button(self, label: str, color: str) -> QPushButton:
+        btn = QPushButton(label)
+        btn.setFixedHeight(32)
+        btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {color};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 0 10px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {color}CC;
+            }}
+            QPushButton:disabled {{
+                background-color: #bdc3c7;
+                color: #7f8c8d;
+            }}
+            """
+        )
+        return btn
+
+    def _apply_style(self) -> None:
+        self.setStyleSheet(
+            """
+            FloatingToolbar {
+                background-color: #2c3e50;
+                border: 1px solid #1a252f;
+                border-radius: 6px;
+            }
+            QWidget#titleBar {
+                background-color: #1a252f;
+                border-radius: 6px;
+            }
+            QLabel#titleLabel {
+                color: #ecf0f1;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton#closeBtn {
+                background: transparent;
+                color: #95a5a6;
+                border: none;
+                font-size: 11px;
+                padding: 0;
+            }
+            QPushButton#closeBtn:hover {
+                color: #e74c3c;
+            }
+            QWidget#btnRow {
+                background-color: #2c3e50;
+            }
+            """
+        )
+
+    # ------------------------------------------------------------------
+    # Button handlers
+    # ------------------------------------------------------------------
+
+    def _on_new_session(self) -> None:
+        dialog = NewSessionDialog(self)
+        if dialog.exec():
+            name = dialog.session_name() or "Untitled Session"
+            self._session.start(name, dialog.test_case_id(), dialog.test_objective())
+            self._update_button_states()
+            self.setWindowTitle(f"QA Evidence Collector — {name}")
+
+    def _on_capture_step(self) -> None:
+        # Hide toolbar so it doesn't appear in the screenshot
+        self.hide()
+        QTimer.singleShot(300, self._do_capture)
+
+    def _do_capture(self) -> None:
+        try:
+            next_number = len(self._session.steps) + 1
+            path = self._screenshot_svc.capture_fullscreen(
+                self._session.session_name, next_number
+            )
+        except Exception as exc:
+            self.show()
+            QMessageBox.critical(self, "Capture Failed", str(exc))
+            return
+
+        self.show()
+
+        dialog = NoteDialog(next_number, path, self)
+        if dialog.exec():
+            self._session.add_step(path, dialog.note())
+        else:
+            # User discarded — delete the saved file
+            from pathlib import Path
+            Path(path).unlink(missing_ok=True)
+
+        self._update_button_states()
+
+    def _on_generate_report(self) -> None:
+        if not self._session.steps:
+            QMessageBox.warning(self, "No Steps", "Capture at least one step before generating a report.")
+            return
+
+        output_dir = self._screenshot_svc.output_dir / self._session.session_name.replace(" ", "_")
+        try:
+            path = self._report_svc.generate(self._session, output_dir)
+        except Exception as exc:
+            QMessageBox.critical(self, "Report Failed", str(exc))
+            return
+
+        result = QMessageBox.information(
+            self,
+            "Report Generated",
+            f"Report saved to:\n{path}\n\nOpen it now?",
+            QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Close,
+        )
+        if result == QMessageBox.StandardButton.Open:
+            import os
+            os.startfile(path)
+
+    def _on_view_steps(self) -> None:
+        dialog = StepListView(self._session, self)
+        dialog.exec()
+        self._update_button_states()
+
+    def _on_settings(self) -> None:
+        QMessageBox.information(self, "Settings", "Settings dialog — coming in Sprint 6.")
+
+    def _update_button_states(self) -> None:
+        active = self._session.is_active
+        self.btn_capture.setEnabled(active)
+        self.btn_steps.setEnabled(active and len(self._session.steps) > 0)
+        self.btn_report.setEnabled(active and len(self._session.steps) > 0)
+
+    # ------------------------------------------------------------------
+    # Drag to move
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_pos and event.buttons() == Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_pos = None

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "qa-evidence-collector"
+version = "0.1.0"
+description = "A desktop tool for QA professionals to capture and document test evidence"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.6.0",
+    "mss>=9.0.1",
+    "python-docx>=1.1.0",
+    "Pillow>=10.2.0",
+    "pynput>=1.7.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+qa-evidence-collector = "qa_evidence_collector.main:main"
