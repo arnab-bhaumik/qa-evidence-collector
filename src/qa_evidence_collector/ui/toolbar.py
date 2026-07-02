@@ -1,22 +1,33 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,
 )
-from PySide6.QtCore import Qt, QPoint, QTimer
+from PySide6.QtCore import Qt, QPoint, QTimer, Signal
 
+from qa_evidence_collector.config.settings import Settings
 from qa_evidence_collector.core.session_manager import SessionManager
+from qa_evidence_collector.core.hotkey_manager import HotkeyManager
 from qa_evidence_collector.services.screenshot_service import ScreenshotService
+from qa_evidence_collector.services.report_service import ReportService
 from qa_evidence_collector.ui.new_session_dialog import NewSessionDialog
 from qa_evidence_collector.ui.note_dialog import NoteDialog
 from qa_evidence_collector.ui.step_list_view import StepListView
-from qa_evidence_collector.services.report_service import ReportService
+from qa_evidence_collector.ui.settings_dialog import SettingsDialog
+from qa_evidence_collector.services.storage_service import StorageService
 
 
 class FloatingToolbar(QWidget):
+    _hotkey_triggered = Signal()
+
     def __init__(self) -> None:
         super().__init__()
+        self._settings = Settings()
         self._session = SessionManager()
-        self._screenshot_svc = ScreenshotService()
+        self._screenshot_svc = ScreenshotService(self._settings.output_dir)
         self._report_svc = ReportService()
+        self._storage_svc = StorageService()
+        self._hotkey_mgr = HotkeyManager()
+        self._hotkey_triggered.connect(self._on_capture_step)
+        self._apply_hotkey()
 
         self._drag_pos: QPoint | None = None
 
@@ -31,6 +42,7 @@ class FloatingToolbar(QWidget):
 
         self._build_ui()
         self._apply_style()
+        QTimer.singleShot(200, self._check_resume_session)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -153,12 +165,40 @@ class FloatingToolbar(QWidget):
     # Button handlers
     # ------------------------------------------------------------------
 
+    def _check_resume_session(self) -> None:
+        if not self._storage_svc.has_saved_session():
+            return
+        reply = QMessageBox.question(
+            self,
+            "Resume Session",
+            "A previous session was found. Do you want to resume it?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._storage_svc.load(self._session)
+            self._update_button_states()
+            self._apply_hotkey()
+            self.setWindowTitle(f"QA Evidence Collector — {self._session.session_name}")
+        else:
+            self._storage_svc.clear()
+
     def _on_new_session(self) -> None:
+        if self._session.is_active and self._session.steps:
+            reply = QMessageBox.question(
+                self, "New Session",
+                "Starting a new session will end the current one. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return
+
         dialog = NewSessionDialog(self)
         if dialog.exec():
             name = dialog.session_name() or "Untitled Session"
             self._session.start(name, dialog.test_case_id(), dialog.test_objective())
+            self._storage_svc.clear()
             self._update_button_states()
+            self._apply_hotkey()
             self.setWindowTitle(f"QA Evidence Collector — {name}")
 
     def _on_capture_step(self) -> None:
@@ -182,8 +222,8 @@ class FloatingToolbar(QWidget):
         dialog = NoteDialog(next_number, path, self)
         if dialog.exec():
             self._session.add_step(path, dialog.note())
+            self._storage_svc.save(self._session)
         else:
-            # User discarded — delete the saved file
             from pathlib import Path
             Path(path).unlink(missing_ok=True)
 
@@ -194,12 +234,14 @@ class FloatingToolbar(QWidget):
             QMessageBox.warning(self, "No Steps", "Capture at least one step before generating a report.")
             return
 
-        output_dir = self._screenshot_svc.output_dir / self._session.session_name.replace(" ", "_")
+        output_dir = self._screenshot_svc.session_folder(self._session.session_name)
         try:
             path = self._report_svc.generate(self._session, output_dir)
         except Exception as exc:
             QMessageBox.critical(self, "Report Failed", str(exc))
             return
+
+        self._storage_svc.clear()
 
         result = QMessageBox.information(
             self,
@@ -214,10 +256,29 @@ class FloatingToolbar(QWidget):
     def _on_view_steps(self) -> None:
         dialog = StepListView(self._session, self)
         dialog.exec()
+        self._storage_svc.save(self._session)
         self._update_button_states()
 
     def _on_settings(self) -> None:
-        QMessageBox.information(self, "Settings", "Settings dialog — coming in Sprint 6.")
+        dialog = SettingsDialog(self._settings, self)
+        if dialog.exec():
+            self._screenshot_svc.set_output_dir(self._settings.output_dir)
+            self._apply_hotkey()
+
+    def _apply_hotkey(self) -> None:
+        self._hotkey_mgr.unregister()
+        if self._settings.hotkey_enabled and self._session.is_active:
+            try:
+                self._hotkey_mgr.register(
+                    self._settings.capture_hotkey,
+                    self._trigger_capture_from_hotkey,
+                )
+            except Exception:
+                pass
+
+    def _trigger_capture_from_hotkey(self) -> None:
+        if self._session.is_active:
+            self._hotkey_triggered.emit()
 
     def _update_button_states(self) -> None:
         active = self._session.is_active
@@ -239,3 +300,7 @@ class FloatingToolbar(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:
         self._drag_pos = None
+
+    def closeEvent(self, event) -> None:
+        self._hotkey_mgr.unregister()
+        super().closeEvent(event)

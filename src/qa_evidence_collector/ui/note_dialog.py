@@ -44,7 +44,7 @@ class NoteDialog(QDialog):
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Discard
         )
         buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        buttons.button(QDialogButtonBox.StandardButton.Discard).clicked.connect(self.reject)
         layout.addWidget(buttons)
 
         self.note_input.setFocus()

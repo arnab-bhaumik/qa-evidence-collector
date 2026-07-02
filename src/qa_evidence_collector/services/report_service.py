@@ -84,12 +84,6 @@ class ReportService:
             run.font.size = Pt(14)
             run.font.color.rgb = RGBColor(0x2C, 0x3E, 0x50)
 
-            # Timestamp
-            ts = doc.add_paragraph()
-            ts_run = ts.add_run(f"Captured: {step.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
-            ts_run.font.size = Pt(9)
-            ts_run.font.color.rgb = RGBColor(0x7F, 0x8C, 0x8D)
-
             # Note
             note_text = step.note if step.note else "(No note provided)"
             note_para = doc.add_paragraph()

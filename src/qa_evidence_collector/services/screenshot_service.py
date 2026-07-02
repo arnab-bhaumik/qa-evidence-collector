@@ -24,8 +24,11 @@ class ScreenshotService:
 
         return str(filepath)
 
-    def _ensure_session_folder(self, session_name: str) -> Path:
+    def session_folder(self, session_name: str) -> Path:
         safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in session_name)
-        folder = self.output_dir / safe_name.strip()
+        return self.output_dir / safe_name.strip()
+
+    def _ensure_session_folder(self, session_name: str) -> Path:
+        folder = self.session_folder(session_name)
         folder.mkdir(parents=True, exist_ok=True)
         return folder
