@@ -12,6 +12,7 @@ from qa_evidence_collector.ui.new_session_dialog import NewSessionDialog
 from qa_evidence_collector.ui.note_dialog import NoteDialog
 from qa_evidence_collector.ui.step_list_view import StepListView
 from qa_evidence_collector.ui.settings_dialog import SettingsDialog
+from qa_evidence_collector.ui.annotation_editor import AnnotationEditor
 from qa_evidence_collector.services.storage_service import StorageService
 
 
@@ -219,13 +220,21 @@ class FloatingToolbar(QWidget):
 
         self.show()
 
-        dialog = NoteDialog(next_number, path, self)
+        # Annotation step
+        annotator = AnnotationEditor(path, next_number, self)
+        if annotator.exec():
+            final_path = annotator.annotated_path()
+        else:
+            final_path = path  # skip annotation, use original
+
+        # Note step
+        dialog = NoteDialog(next_number, final_path, self)
         if dialog.exec():
-            self._session.add_step(path, dialog.note())
+            self._session.add_step(final_path, dialog.note())
             self._storage_svc.save(self._session)
         else:
             from pathlib import Path
-            Path(path).unlink(missing_ok=True)
+            Path(final_path).unlink(missing_ok=True)
 
         self._update_button_states()
 
