@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsItem,
     QGraphicsTextItem, QWidget, QButtonGroup, QSizePolicy, QFrame,
-    QInputDialog,
+    QInputDialog, QApplication,
 )
 from PySide6.QtGui import (
     QPixmap, QColor, QIcon, QPainter, QPen, QBrush,
@@ -25,6 +25,10 @@ ARROWHEAD_SIZE = 14
 TEXT_FONT_SIZE = 16
 TEXT_PADDING   = 10
 TEXT_MAX_WIDTH = 320
+
+HIGHLIGHT_COLOR  = QColor(255, 235, 59, 100)   # yellow, semi-transparent fill
+HIGHLIGHT_BORDER = QColor(255, 193, 7, 220)     # amber border
+HIGHLIGHT_WIDTH  = 2
 
 
 # ==================================================================
@@ -179,6 +183,161 @@ class TextItem(QGraphicsItem):
 
 
 # ==================================================================
+# Highlight Graphics Item
+# ==================================================================
+
+_HIGHLIGHT_PRESETS = [
+    (QColor(255, 235, 59, 100),  QColor(255, 193, 7, 220)),    # yellow
+    (QColor(76, 175, 80, 100),   QColor(56, 142, 60, 220)),     # green
+    (QColor(33, 150, 243, 100),  QColor(21, 101, 192, 220)),    # blue
+    (QColor(244, 67, 54, 100),   QColor(183, 28, 28, 220)),     # red
+    (QColor(156, 39, 176, 100),  QColor(106, 27, 154, 220)),    # purple
+]
+
+
+_HANDLE_SIZE = 8
+_HANDLES = ["tl", "tm", "tr", "ml", "mr", "bl", "bm", "br"]
+
+
+class HighlightItem(QGraphicsItem):
+    def __init__(self, start: QPointF) -> None:
+        super().__init__()
+        self._r            = QRectF(start, start)
+        self._color_index  = 0
+        self._fill, self._border = _HIGHLIGHT_PRESETS[0]
+        self._resize_handle: str | None = None
+        self._resize_start: QPointF | None = None
+        self._rect_at_start: QRectF | None = None
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setAcceptHoverEvents(True)
+
+    # ------------------------------------------------------------------
+    # Geometry helpers
+    # ------------------------------------------------------------------
+
+    def update_end(self, end: QPointF) -> None:
+        self.prepareGeometryChange()
+        self._r = QRectF(self._r.topLeft(), end).normalized()
+
+    def _handle_rects(self) -> dict[str, QRectF]:
+        r = self._r
+        s = _HANDLE_SIZE / 2
+        mx, my = r.center().x(), r.center().y()
+        return {
+            "tl": QRectF(r.left()  - s, r.top()    - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "tm": QRectF(mx        - s, r.top()    - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "tr": QRectF(r.right() - s, r.top()    - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "ml": QRectF(r.left()  - s, my         - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "mr": QRectF(r.right() - s, my         - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "bl": QRectF(r.left()  - s, r.bottom() - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "bm": QRectF(mx        - s, r.bottom() - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "br": QRectF(r.right() - s, r.bottom() - s, _HANDLE_SIZE, _HANDLE_SIZE),
+        }
+
+    def _handle_at(self, pos: QPointF) -> str | None:
+        for name, rect in self._handle_rects().items():
+            if rect.contains(pos):
+                return name
+        return None
+
+    def _cursor_for_handle(self, handle: str) -> Qt.CursorShape:
+        diag1 = {"tl", "br"}
+        diag2 = {"tr", "bl"}
+        horiz = {"ml", "mr"}
+        if handle in diag1:
+            return Qt.CursorShape.SizeFDiagCursor
+        if handle in diag2:
+            return Qt.CursorShape.SizeBDiagCursor
+        if handle in horiz:
+            return Qt.CursorShape.SizeHorCursor
+        return Qt.CursorShape.SizeVerCursor
+
+    def boundingRect(self) -> QRectF:
+        return self._r.adjusted(-_HANDLE_SIZE, -_HANDLE_SIZE,
+                                 _HANDLE_SIZE,  _HANDLE_SIZE)
+
+    # ------------------------------------------------------------------
+    # Paint
+    # ------------------------------------------------------------------
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._r.width() < 2 or self._r.height() < 2:
+            return
+
+        # Fill + border
+        painter.setBrush(QBrush(self._fill))
+        painter.setPen(QPen(self._border, HIGHLIGHT_WIDTH,
+                            Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap,
+                            Qt.PenJoinStyle.RoundJoin))
+        painter.drawRoundedRect(self._r, 4, 4)
+
+        # Draw handles when selected
+        if self.isSelected():
+            painter.setBrush(QBrush(QColor("#ffffff")))
+            painter.setPen(QPen(QColor("#1a73e8"), 1.5))
+            for rect in self._handle_rects().values():
+                painter.drawRect(rect)
+
+    # ------------------------------------------------------------------
+    # Mouse events — resize
+    # ------------------------------------------------------------------
+
+    def hoverMoveEvent(self, event) -> None:
+        handle = self._handle_at(event.pos())
+        if handle:
+            self.setCursor(self._cursor_for_handle(handle))
+        elif self._r.contains(event.pos()):
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self._handle_at(event.pos())
+            if handle:
+                self._resize_handle    = handle
+                self._resize_start     = event.scenePos()
+                self._rect_at_start    = QRectF(self._r)
+                event.accept()
+                return
+        # Move the whole box
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._resize_handle and self._resize_start and self._rect_at_start:
+            delta = event.scenePos() - self._resize_start
+            r     = QRectF(self._rect_at_start)
+            h     = self._resize_handle
+            if "l" in h: r.setLeft(r.left()     + delta.x())
+            if "r" in h: r.setRight(r.right()   + delta.x())
+            if "t" in h: r.setTop(r.top()       + delta.y())
+            if "b" in h: r.setBottom(r.bottom() + delta.y())
+            self.prepareGeometryChange()
+            self._r = r.normalized()
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._resize_handle = None
+        self._resize_start  = None
+        self._rect_at_start = None
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self._color_index = (self._color_index + 1) % len(_HIGHLIGHT_PRESETS)
+        self._fill, self._border = _HIGHLIGHT_PRESETS[self._color_index]
+        self.update()
+
+
+# ==================================================================
 # Annotation Canvas
 # ==================================================================
 
@@ -192,17 +351,21 @@ class AnnotationCanvas(QGraphicsView):
         self._scene.addItem(self._pixmap_item)
         self._scene.setSceneRect(self._pixmap_item.boundingRect())
 
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setRenderHints(
+            QPainter.RenderHint.Antialiasing |
+            QPainter.RenderHint.SmoothPixmapTransform
+        )
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setStyleSheet("background: #1a1a1a; border: none;")
-        self.fitInView(self._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
 
+        self._zoom_level: float = 1.0
         self._current_tool: str = "arrow"
         self._drawing: bool = False
-        self._current_item: ArrowItem | None = None
+        self._current_item: ArrowItem | HighlightItem | None = None
         self._annotation_items: list[QGraphicsItem] = []
         self._pending_text_pos: QPointF | None = None
 
@@ -212,6 +375,7 @@ class AnnotationCanvas(QGraphicsView):
 
     def set_tool(self, tool: str) -> None:
         self._current_tool = tool
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
         cursors = {
             "arrow":     Qt.CursorShape.CrossCursor,
             "text":      Qt.CursorShape.IBeamCursor,
@@ -251,6 +415,16 @@ class AnnotationCanvas(QGraphicsView):
             self._drawing = True
             self._current_item = ArrowItem(scene_pos, scene_pos)
             self._scene.addItem(self._current_item)
+        elif event.button() == Qt.MouseButton.LeftButton and self._current_tool == "highlight":
+            scene_pos = self.mapToScene(event.position().toPoint())
+            hit = self._scene.itemAt(scene_pos, self.transform())
+            if hit and isinstance(hit, HighlightItem):
+                super().mousePressEvent(event)
+            else:
+                self._drawing = True
+                self._current_item = HighlightItem(scene_pos)
+                self._current_item.setSelected(True)
+                self._scene.addItem(self._current_item)
         elif event.button() == Qt.MouseButton.LeftButton and self._current_tool == "text":
             scene_pos = self.mapToScene(event.position().toPoint())
             hit = self._scene.itemAt(scene_pos, self.transform())
@@ -283,6 +457,44 @@ class AnnotationCanvas(QGraphicsView):
             self.window()._prompt_text_input(pos)
         else:
             super().mouseReleaseEvent(event)
+
+    # ------------------------------------------------------------------
+    # Zoom support
+    # ------------------------------------------------------------------
+
+    def wheelEvent(self, event) -> None:
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+            new_zoom = self._zoom_level * factor
+            if 0.1 <= new_zoom <= 5.0:
+                self._zoom_level = new_zoom
+                self.scale(factor, factor)
+                self.window()._update_zoom_label(self._zoom_level)
+        else:
+            super().wheelEvent(event)
+
+    def zoom_fit(self) -> None:
+        self.resetTransform()
+        self._zoom_level = 1.0
+        self.fitInView(self._pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+        vw = self.viewport().width()
+        vh = self.viewport().height()
+        iw = self._pixmap_item.pixmap().width()
+        ih = self._pixmap_item.pixmap().height()
+        self._zoom_level = min(vw / iw, vh / ih)
+        self.window()._update_zoom_label(self._zoom_level)
+
+    def zoom_100(self) -> None:
+        self.resetTransform()
+        self._zoom_level = 1.0
+        self.window()._update_zoom_label(self._zoom_level)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.zoom_fit()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
 
     # ------------------------------------------------------------------
     # Flatten to image
@@ -477,6 +689,37 @@ class AnnotationEditor(QDialog):
         self._hint_label.setStyleSheet("color: #555555; font-size: 11px;")
         layout.addWidget(self._hint_label)
 
+        layout.addSpacing(16)
+
+        btn_fit = QPushButton("Fit")
+        btn_fit.setFixedHeight(24)
+        btn_fit.setFixedWidth(36)
+        btn_fit.setStyleSheet(
+            "QPushButton { background:#333; color:#aaa; border:1px solid #555;"
+            "border-radius:4px; font-size:11px; }"
+            "QPushButton:hover { background:#444; }"
+        )
+        btn_fit.setToolTip("Fit to window")
+        btn_fit.clicked.connect(lambda: self._canvas.zoom_fit())
+        layout.addWidget(btn_fit)
+
+        btn_100 = QPushButton("100%")
+        btn_100.setFixedHeight(24)
+        btn_100.setFixedWidth(42)
+        btn_100.setStyleSheet(
+            "QPushButton { background:#333; color:#aaa; border:1px solid #555;"
+            "border-radius:4px; font-size:11px; }"
+            "QPushButton:hover { background:#444; }"
+        )
+        btn_100.setToolTip("Actual size")
+        btn_100.clicked.connect(lambda: self._canvas.zoom_100())
+        layout.addWidget(btn_100)
+
+        self._zoom_label = QLabel("100%")
+        self._zoom_label.setStyleSheet("color: #666666; font-size: 11px; min-width: 38px;")
+        self._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._zoom_label)
+
         return bar
 
     def _build_action_bar(self) -> QWidget:
@@ -523,6 +766,9 @@ class AnnotationEditor(QDialog):
         }
         self._hint_label.setText(hints.get(tool, ""))
 
+    def _update_zoom_label(self, zoom: float) -> None:
+        self._zoom_label.setText(f"{int(zoom * 100)}%")
+
     def _prompt_text_input(self, pos: QPointF) -> None:
         text, ok = QInputDialog.getText(
             self, "Add Text Label", "Enter label text:",
@@ -554,6 +800,10 @@ class AnnotationEditor(QDialog):
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Z and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
             self._canvas.undo()
+        elif event.key() == Qt.Key.Key_0 and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            self._canvas.zoom_fit()
+        elif event.key() == Qt.Key.Key_1 and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            self._canvas.zoom_100()
         else:
             super().keyPressEvent(event)
 
