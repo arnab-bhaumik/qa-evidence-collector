@@ -14,6 +14,7 @@ from qa_evidence_collector.ui.note_dialog import NoteDialog
 from qa_evidence_collector.ui.step_list_view import StepListView
 from qa_evidence_collector.ui.settings_dialog import SettingsDialog
 from qa_evidence_collector.ui.annotation_editor import AnnotationEditor
+from qa_evidence_collector.ui.test_result_dialog import TestResultDialog
 from qa_evidence_collector.services.storage_service import StorageService
 
 
@@ -246,6 +247,12 @@ class FloatingToolbar(QWidget):
         if not self._session.steps:
             QMessageBox.warning(self, "No Steps", "Capture at least one step before generating a report.")
             return
+
+        # Ask for Pass / Fail before generating
+        result_dialog = TestResultDialog(self)
+        if not result_dialog.exec():
+            return
+        self._session.status = result_dialog.result_status()
 
         output_dir = self._screenshot_svc.session_folder(
             self._session.session_name, self._session.test_case_id
