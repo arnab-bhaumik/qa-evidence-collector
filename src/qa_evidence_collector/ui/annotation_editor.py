@@ -13,7 +13,9 @@ from PySide6.QtGui import (
     QPixmap, QColor, QIcon, QPainter, QPen, QBrush,
     QPolygonF, QPainterPath, QImage, QFont,
 )
-from PySide6.QtCore import Qt, QSize, QPointF, QRectF, QLineF
+from PySide6.QtCore import Qt, QSize, QPointF, QRectF, QLineF, QRect
+
+from PIL import Image, ImageFilter
 
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
@@ -338,6 +340,191 @@ class HighlightItem(QGraphicsItem):
 
 
 # ==================================================================
+# Blur Graphics Item
+# ==================================================================
+
+BLUR_RADIUS    = 18
+BLUR_TILE_SIZE = 12   # pixelation block size
+
+
+def _blur_region(source_pixmap: QPixmap, rect: QRectF) -> QPixmap:
+    """Return a blurred/pixelated crop of source_pixmap for the given scene rect."""
+    r = rect.toRect()
+    if r.width() < 1 or r.height() < 1:
+        return QPixmap()
+
+    crop = source_pixmap.copy(r)
+    img  = crop.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+
+    # Convert QImage → PIL Image
+    buf  = img.bits().tobytes()
+    pil  = Image.frombytes("RGBA", (img.width(), img.height()), buf)
+
+    # Pixelate by downscaling then upscaling
+    small_w = max(1, img.width()  // BLUR_TILE_SIZE)
+    small_h = max(1, img.height() // BLUR_TILE_SIZE)
+    pil = pil.resize((small_w, small_h), Image.NEAREST)
+    pil = pil.resize((img.width(), img.height()), Image.NEAREST)
+
+    # Additional Gaussian blur on top
+    pil = pil.filter(ImageFilter.GaussianBlur(radius=BLUR_RADIUS // 4))
+
+    # Back to QPixmap
+    out = pil.tobytes("raw", "RGBA")
+    qimg = QImage(out, img.width(), img.height(), QImage.Format.Format_RGBA8888)
+    return QPixmap.fromImage(qimg)
+
+
+class BlurItem(QGraphicsItem):
+    def __init__(self, start: QPointF, source_pixmap: QPixmap) -> None:
+        super().__init__()
+        self._r              = QRectF(start, start)
+        self._source_pixmap  = source_pixmap
+        self._blurred: QPixmap | None = None
+        self._dirty          = True
+        self._resize_handle: str | None = None
+        self._resize_start: QPointF | None = None
+        self._rect_at_start: QRectF | None = None
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setAcceptHoverEvents(True)
+
+    def update_end(self, end: QPointF) -> None:
+        self.prepareGeometryChange()
+        self._r     = QRectF(self._r.topLeft(), end).normalized()
+        self._dirty = True
+
+    def _handle_rects(self) -> dict[str, QRectF]:
+        r = self._r
+        s = _HANDLE_SIZE / 2
+        mx, my = r.center().x(), r.center().y()
+        return {
+            "tl": QRectF(r.left()  - s, r.top()    - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "tm": QRectF(mx        - s, r.top()    - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "tr": QRectF(r.right() - s, r.top()    - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "ml": QRectF(r.left()  - s, my         - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "mr": QRectF(r.right() - s, my         - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "bl": QRectF(r.left()  - s, r.bottom() - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "bm": QRectF(mx        - s, r.bottom() - s, _HANDLE_SIZE, _HANDLE_SIZE),
+            "br": QRectF(r.right() - s, r.bottom() - s, _HANDLE_SIZE, _HANDLE_SIZE),
+        }
+
+    def _handle_at(self, pos: QPointF) -> str | None:
+        for name, rect in self._handle_rects().items():
+            if rect.contains(pos):
+                return name
+        return None
+
+    def _cursor_for_handle(self, handle: str) -> Qt.CursorShape:
+        if handle in {"tl", "br"}: return Qt.CursorShape.SizeFDiagCursor
+        if handle in {"tr", "bl"}: return Qt.CursorShape.SizeBDiagCursor
+        if handle in {"ml", "mr"}: return Qt.CursorShape.SizeHorCursor
+        return Qt.CursorShape.SizeVerCursor
+
+    def boundingRect(self) -> QRectF:
+        return self._r.adjusted(-_HANDLE_SIZE, -_HANDLE_SIZE,
+                                 _HANDLE_SIZE,  _HANDLE_SIZE)
+
+    def _ensure_blurred(self) -> None:
+        if self._dirty:
+            self._blurred = _blur_region(self._source_pixmap, self._r)
+            self._dirty   = False
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        rect = self._r
+        if rect.width() < 2 or rect.height() < 2:
+            return
+
+        self._ensure_blurred()
+        if self._blurred and not self._blurred.isNull():
+            painter.drawPixmap(rect.toRect(), self._blurred)
+
+        # Dashed border
+        painter.setPen(QPen(QColor("#ffffff"), 2, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(rect)
+
+        # BLUR label
+        if rect.width() > 40 and rect.height() > 20:
+            label_rect = QRectF(rect.x() + 4, rect.y() + 4, 44, 16)
+            painter.setBrush(QBrush(QColor(0, 0, 0, 160)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(label_rect, 3, 3)
+            painter.setPen(QPen(QColor("#ffffff")))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, "BLUR")
+
+        # Resize handles when selected
+        if self.isSelected():
+            painter.setBrush(QBrush(QColor("#ffffff")))
+            painter.setPen(QPen(QColor("#1a73e8"), 1.5))
+            for r in self._handle_rects().values():
+                painter.drawRect(r)
+
+    def hoverMoveEvent(self, event) -> None:
+        handle = self._handle_at(event.pos())
+        if handle:
+            self.setCursor(self._cursor_for_handle(handle))
+        elif self._r.contains(event.pos()):
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self._handle_at(event.pos())
+            if handle:
+                self._resize_handle  = handle
+                self._resize_start   = event.scenePos()
+                self._rect_at_start  = QRectF(self._r)
+                event.accept()
+                return
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._resize_handle and self._resize_start and self._rect_at_start:
+            delta = event.scenePos() - self._resize_start
+            r = QRectF(self._rect_at_start)
+            h = self._resize_handle
+            if "l" in h: r.setLeft(r.left()     + delta.x())
+            if "r" in h: r.setRight(r.right()   + delta.x())
+            if "t" in h: r.setTop(r.top()       + delta.y())
+            if "b" in h: r.setBottom(r.bottom() + delta.y())
+            self.prepareGeometryChange()
+            self._r     = r.normalized()
+            self._dirty = True
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._resize_handle:
+            self._resize_handle = None
+            self._resize_start  = None
+            self._rect_at_start = None
+            self._dirty = True
+            self.update()
+            event.accept()
+            return
+        # After move — recalculate blur at new position
+        offset = self.pos()
+        if not offset.isNull():
+            self._r = QRectF(
+                self._r.topLeft()     + offset,
+                self._r.bottomRight() + offset,
+            )
+            self.setPos(QPointF(0, 0))
+            self._dirty = True
+            self.prepareGeometryChange()
+            self.update()
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        super().mouseReleaseEvent(event)
+
+
+# ==================================================================
 # Annotation Canvas
 # ==================================================================
 
@@ -365,7 +552,7 @@ class AnnotationCanvas(QGraphicsView):
         self._zoom_level: float = 1.0
         self._current_tool: str = "arrow"
         self._drawing: bool = False
-        self._current_item: ArrowItem | HighlightItem | None = None
+        self._current_item: ArrowItem | HighlightItem | BlurItem | None = None
         self._annotation_items: list[QGraphicsItem] = []
         self._pending_text_pos: QPointF | None = None
 
@@ -424,6 +611,15 @@ class AnnotationCanvas(QGraphicsView):
                 self._drawing = True
                 self._current_item = HighlightItem(scene_pos)
                 self._current_item.setSelected(True)
+                self._scene.addItem(self._current_item)
+        elif event.button() == Qt.MouseButton.LeftButton and self._current_tool == "blur":
+            scene_pos = self.mapToScene(event.position().toPoint())
+            hit = self._scene.itemAt(scene_pos, self.transform())
+            if hit and isinstance(hit, BlurItem):
+                super().mousePressEvent(event)
+            else:
+                self._drawing = True
+                self._current_item = BlurItem(scene_pos, self._pixmap_item.pixmap())
                 self._scene.addItem(self._current_item)
         elif event.button() == Qt.MouseButton.LeftButton and self._current_tool == "text":
             scene_pos = self.mapToScene(event.position().toPoint())
