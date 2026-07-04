@@ -89,7 +89,9 @@ class TextItem(QGraphicsItem):
         self._text = text
         self._font = QFont("Segoe UI", TEXT_FONT_SIZE, QFont.Weight.Bold)
         self.setPos(pos)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
 
     def boundingRect(self) -> QRectF:
         from PySide6.QtGui import QFontMetrics
@@ -202,7 +204,12 @@ class AnnotationCanvas(QGraphicsView):
             self._current_item = ArrowItem(scene_pos, scene_pos)
             self._scene.addItem(self._current_item)
         elif event.button() == Qt.MouseButton.LeftButton and self._current_tool == "text":
-            self._pending_text_pos = self.mapToScene(event.position().toPoint())
+            scene_pos = self.mapToScene(event.position().toPoint())
+            hit = self._scene.itemAt(scene_pos, self.transform())
+            if hit and isinstance(hit, TextItem):
+                super().mousePressEvent(event)  # let the item handle drag
+            else:
+                self._pending_text_pos = scene_pos
         else:
             super().mousePressEvent(event)
 
@@ -225,7 +232,6 @@ class AnnotationCanvas(QGraphicsView):
         elif self._current_tool == "text" and self._pending_text_pos is not None:
             pos = self._pending_text_pos
             self._pending_text_pos = None
-            # Emit signal to editor to show input dialog (must be on main thread)
             self.window()._prompt_text_input(pos)
         else:
             super().mouseReleaseEvent(event)
