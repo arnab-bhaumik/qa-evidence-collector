@@ -22,9 +22,9 @@ ARROW_COLOR    = QColor("#FF3B30")   # red
 ARROW_WIDTH    = 3
 ARROWHEAD_SIZE = 14
 
-TEXT_COLOR     = QColor("#FFD600")   # yellow
-TEXT_BG_COLOR  = QColor(0, 0, 0, 160)  # semi-transparent black
 TEXT_FONT_SIZE = 16
+TEXT_PADDING   = 10
+TEXT_MAX_WIDTH = 320
 
 
 # ==================================================================
@@ -83,52 +83,99 @@ class ArrowItem(QGraphicsItem):
 # Text Graphics Item
 # ==================================================================
 
+def _is_dark_at(pixmap: QPixmap, pos: QPointF) -> bool:
+    """Sample a small region around pos and return True if it is predominantly dark."""
+    img = pixmap.toImage()
+    x, y = int(pos.x()), int(pos.y())
+    samples, total = 0, 0
+    for dx in range(-20, 21, 10):
+        for dy in range(-20, 21, 10):
+            sx, sy = x + dx, y + dy
+            if 0 <= sx < img.width() and 0 <= sy < img.height():
+                c = img.pixelColor(sx, sy)
+                total += 1
+                if c.lightness() < 128:
+                    samples += 1
+    return (samples / total) > 0.5 if total else True
+
+
 class TextItem(QGraphicsItem):
-    def __init__(self, pos: QPointF, text: str) -> None:
+    def __init__(self, pos: QPointF, text: str, dark_bg: bool = True) -> None:
         super().__init__()
-        self._text = text
-        self._font = QFont("Segoe UI", TEXT_FONT_SIZE, QFont.Weight.Bold)
+        self._text    = text
+        self._font    = QFont("Segoe UI", TEXT_FONT_SIZE, QFont.Weight.Bold)
+        self._dark_bg = dark_bg
         self.setPos(pos)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setCursor(Qt.CursorShape.SizeAllCursor)
+        self._update_colors()
+        self._recalc()
 
-    def boundingRect(self) -> QRectF:
+    def set_text(self, text: str) -> None:
+        self.prepareGeometryChange()
+        self._text = text
+        self._recalc()
+        self.update()
+
+    def _update_colors(self) -> None:
+        if self._dark_bg:
+            self._bg_color   = QColor(0, 0, 0, 210)
+            self._text_color = QColor("#FFFFFF")
+        else:
+            self._bg_color   = QColor(255, 255, 255, 230)
+            self._text_color = QColor("#000000")
+
+    def _recalc(self) -> None:
         from PySide6.QtGui import QFontMetrics
         fm = QFontMetrics(self._font)
-        rect = fm.boundingRect(self._text)
-        padding = 6
-        return QRectF(
-            -padding,
-            -rect.height() - padding,
-            rect.width() + padding * 2,
-            rect.height() + padding * 2,
-        )
+        inner_w = TEXT_MAX_WIDTH - TEXT_PADDING * 2
+        # Wrap text into lines
+        words = self._text.split()
+        lines, current = [], ""
+        for word in words:
+            test = (current + " " + word).strip()
+            if fm.horizontalAdvance(test) <= inner_w:
+                current = test
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        self._lines    = lines or [""]
+        self._line_h   = fm.height()
+        self._line_gap = 3
+        total_h = len(self._lines) * self._line_h + (len(self._lines) - 1) * self._line_gap
+        max_w   = max(fm.horizontalAdvance(l) for l in self._lines)
+        self._inner_w  = max_w
+        self._inner_h  = total_h
+        self._box_w    = self._inner_w + TEXT_PADDING * 2
+        self._box_h    = self._inner_h + TEXT_PADDING * 2
+
+    def boundingRect(self) -> QRectF:
+        return QRectF(0, 0, self._box_w, self._box_h)
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setFont(self._font)
 
-        from PySide6.QtGui import QFontMetrics
-        fm = QFontMetrics(self._font)
-        text_rect = fm.boundingRect(self._text)
-        padding = 6
+        bg_rect = QRectF(0, 0, self._box_w, self._box_h)
 
-        bg_rect = QRectF(
-            -padding,
-            -text_rect.height() - padding,
-            text_rect.width() + padding * 2,
-            text_rect.height() + padding * 2,
-        )
-
-        # Background pill
-        painter.setBrush(QBrush(TEXT_BG_COLOR))
+        # Background
+        painter.setBrush(QBrush(self._bg_color))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(bg_rect, 4, 4)
+        painter.drawRoundedRect(bg_rect, 8, 8)
 
-        # Text
-        painter.setPen(QPen(TEXT_COLOR))
-        painter.drawText(0, 0, self._text)
+        # Each line centred
+        painter.setPen(QPen(self._text_color))
+        for i, line in enumerate(self._lines):
+            y = TEXT_PADDING + i * (self._line_h + self._line_gap)
+            line_rect = QRectF(TEXT_PADDING, y, self._inner_w, self._line_h)
+            painter.drawText(line_rect, Qt.AlignmentFlag.AlignCenter, line)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.scene().views()[0].window()._prompt_text_edit(self)
 
 
 # ==================================================================
@@ -192,7 +239,8 @@ class AnnotationCanvas(QGraphicsView):
     # ------------------------------------------------------------------
 
     def add_text_item(self, pos: QPointF, text: str) -> None:
-        item = TextItem(pos, text)
+        dark = _is_dark_at(self._pixmap_item.pixmap(), pos)
+        item = TextItem(pos, text, dark_bg=not dark)
         self._scene.addItem(item)
         self._annotation_items.append(item)
         self._scene.update()
@@ -477,12 +525,17 @@ class AnnotationEditor(QDialog):
 
     def _prompt_text_input(self, pos: QPointF) -> None:
         text, ok = QInputDialog.getText(
-            self,
-            "Add Text Label",
-            "Enter label text:",
+            self, "Add Text Label", "Enter label text:",
         )
         if ok and text.strip():
             self._canvas.add_text_item(pos, text.strip())
+
+    def _prompt_text_edit(self, item: "TextItem") -> None:
+        text, ok = QInputDialog.getText(
+            self, "Edit Text Label", "Edit label text:", text=item._text,
+        )
+        if ok and text.strip():
+            item.set_text(text.strip())
 
     def _on_done(self) -> None:
         if not self._canvas._annotation_items:
