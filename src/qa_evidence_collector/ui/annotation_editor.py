@@ -6,20 +6,25 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsItem,
-    QWidget, QButtonGroup, QSizePolicy, QFrame,
+    QGraphicsTextItem, QWidget, QButtonGroup, QSizePolicy, QFrame,
+    QInputDialog,
 )
 from PySide6.QtGui import (
     QPixmap, QColor, QIcon, QPainter, QPen, QBrush,
-    QPolygonF, QPainterPath, QImage,
+    QPolygonF, QPainterPath, QImage, QFont,
 )
 from PySide6.QtCore import Qt, QSize, QPointF, QRectF, QLineF
 
 
 _ICONS_DIR = Path(__file__).parent.parent / "resources" / "icons"
 
-ARROW_COLOR   = QColor("#FF3B30")   # red
-ARROW_WIDTH   = 3
+ARROW_COLOR    = QColor("#FF3B30")   # red
+ARROW_WIDTH    = 3
 ARROWHEAD_SIZE = 14
+
+TEXT_COLOR     = QColor("#FFD600")   # yellow
+TEXT_BG_COLOR  = QColor(0, 0, 0, 160)  # semi-transparent black
+TEXT_FONT_SIZE = 16
 
 
 # ==================================================================
@@ -75,6 +80,56 @@ class ArrowItem(QGraphicsItem):
 
 
 # ==================================================================
+# Text Graphics Item
+# ==================================================================
+
+class TextItem(QGraphicsItem):
+    def __init__(self, pos: QPointF, text: str) -> None:
+        super().__init__()
+        self._text = text
+        self._font = QFont("Segoe UI", TEXT_FONT_SIZE, QFont.Weight.Bold)
+        self.setPos(pos)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+
+    def boundingRect(self) -> QRectF:
+        from PySide6.QtGui import QFontMetrics
+        fm = QFontMetrics(self._font)
+        rect = fm.boundingRect(self._text)
+        padding = 6
+        return QRectF(
+            -padding,
+            -rect.height() - padding,
+            rect.width() + padding * 2,
+            rect.height() + padding * 2,
+        )
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(self._font)
+
+        from PySide6.QtGui import QFontMetrics
+        fm = QFontMetrics(self._font)
+        text_rect = fm.boundingRect(self._text)
+        padding = 6
+
+        bg_rect = QRectF(
+            -padding,
+            -text_rect.height() - padding,
+            text_rect.width() + padding * 2,
+            text_rect.height() + padding * 2,
+        )
+
+        # Background pill
+        painter.setBrush(QBrush(TEXT_BG_COLOR))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(bg_rect, 4, 4)
+
+        # Text
+        painter.setPen(QPen(TEXT_COLOR))
+        painter.drawText(0, 0, self._text)
+
+
+# ==================================================================
 # Annotation Canvas
 # ==================================================================
 
@@ -100,6 +155,7 @@ class AnnotationCanvas(QGraphicsView):
         self._drawing: bool = False
         self._current_item: ArrowItem | None = None
         self._annotation_items: list[QGraphicsItem] = []
+        self._pending_text_pos: QPointF | None = None
 
     # ------------------------------------------------------------------
     # Tool switching
@@ -133,12 +189,20 @@ class AnnotationCanvas(QGraphicsView):
     # Mouse events — arrow drawing
     # ------------------------------------------------------------------
 
+    def add_text_item(self, pos: QPointF, text: str) -> None:
+        item = TextItem(pos, text)
+        self._scene.addItem(item)
+        self._annotation_items.append(item)
+        self._scene.update()
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._current_tool == "arrow":
             scene_pos = self.mapToScene(event.position().toPoint())
             self._drawing = True
             self._current_item = ArrowItem(scene_pos, scene_pos)
             self._scene.addItem(self._current_item)
+        elif event.button() == Qt.MouseButton.LeftButton and self._current_tool == "text":
+            self._pending_text_pos = self.mapToScene(event.position().toPoint())
         else:
             super().mousePressEvent(event)
 
@@ -158,6 +222,11 @@ class AnnotationCanvas(QGraphicsView):
             self._current_item = None
             self._drawing = False
             self._scene.update()
+        elif self._current_tool == "text" and self._pending_text_pos is not None:
+            pos = self._pending_text_pos
+            self._pending_text_pos = None
+            # Emit signal to editor to show input dialog (must be on main thread)
+            self.window()._prompt_text_input(pos)
         else:
             super().mouseReleaseEvent(event)
 
@@ -350,9 +419,9 @@ class AnnotationEditor(QDialog):
         layout.addWidget(lbl)
         layout.addStretch()
 
-        hint = QLabel("Click & drag to draw arrow  ·  Ctrl+Z to undo")
-        hint.setStyleSheet("color: #555555; font-size: 11px;")
-        layout.addWidget(hint)
+        self._hint_label = QLabel("Click & drag to draw arrow  ·  Ctrl+Z to undo")
+        self._hint_label.setStyleSheet("color: #555555; font-size: 11px;")
+        layout.addWidget(self._hint_label)
 
         return bar
 
@@ -390,7 +459,24 @@ class AnnotationEditor(QDialog):
             self._btn_highlight: "highlight",
             self._btn_blur:      "blur",
         }
-        self._canvas.set_tool(tool_map.get(btn, "arrow"))
+        tool = tool_map.get(btn, "arrow")
+        self._canvas.set_tool(tool)
+        hints = {
+            "arrow":     "Click & drag to draw arrow  ·  Ctrl+Z to undo",
+            "text":      "Click on the screenshot to place a text label  ·  Ctrl+Z to undo",
+            "highlight": "Click & drag to highlight an area  ·  Ctrl+Z to undo",
+            "blur":      "Click & drag to blur sensitive data  ·  Ctrl+Z to undo",
+        }
+        self._hint_label.setText(hints.get(tool, ""))
+
+    def _prompt_text_input(self, pos: QPointF) -> None:
+        text, ok = QInputDialog.getText(
+            self,
+            "Add Text Label",
+            "Enter label text:",
+        )
+        if ok and text.strip():
+            self._canvas.add_text_item(pos, text.strip())
 
     def _on_done(self) -> None:
         if not self._canvas._annotation_items:
