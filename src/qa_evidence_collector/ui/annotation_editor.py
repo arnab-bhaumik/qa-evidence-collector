@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsItem,
     QGraphicsTextItem, QWidget, QButtonGroup, QSizePolicy, QFrame,
-    QInputDialog, QApplication,
+    QInputDialog, QApplication, QColorDialog,
 )
 from PySide6.QtGui import (
     QPixmap, QColor, QIcon, QPainter, QPen, QBrush,
@@ -32,16 +32,166 @@ HIGHLIGHT_COLOR  = QColor(255, 235, 59, 100)   # yellow, semi-transparent fill
 HIGHLIGHT_BORDER = QColor(255, 193, 7, 220)     # amber border
 HIGHLIGHT_WIDTH  = 2
 
+# Colour presets for the palette
+COLOUR_PRESETS = [
+    QColor("#FF3B30"),  # red
+    QColor("#FF9500"),  # orange
+    QColor("#FFD600"),  # yellow
+    QColor("#34C759"),  # green
+    QColor("#007AFF"),  # blue
+    QColor("#AF52DE"),  # purple
+]
+
+# Per-tool default colours
+_TOOL_DEFAULT_COLOURS: dict[str, QColor] = {
+    "arrow":     QColor("#FF3B30"),
+    "text":      QColor("#FFD600"),
+    "highlight": QColor("#FFD600"),
+}
+
+
+# ==================================================================
+# Colour Palette Widget
+# ==================================================================
+
+class ColourSwatch(QPushButton):
+    def __init__(self, colour: QColor, parent=None) -> None:
+        super().__init__(parent)
+        self._colour = colour
+        self.setFixedSize(26, 26)
+        self.setCheckable(True)
+        self._refresh_style(False)
+
+    def colour(self) -> QColor:
+        return self._colour
+
+    def set_colour(self, colour: QColor) -> None:
+        self._colour = colour
+        self._refresh_style(self.isChecked())
+
+    def _refresh_style(self, selected: bool) -> None:
+        ring = "3px solid #ffffff" if selected else "2px solid #555555"
+        self.setStyleSheet(
+            f"QPushButton {{ background: {self._colour.name()}; "
+            f"border: {ring}; border-radius: 6px; }}"
+            f"QPushButton:hover {{ border: 2px solid #aaaaaa; }}"
+        )
+
+    def setChecked(self, checked: bool) -> None:
+        super().setChecked(checked)
+        self._refresh_style(checked)
+
+
+class ColourPalette(QWidget):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._selected_colour: QColor = COLOUR_PRESETS[0]
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 4)
+        layout.setSpacing(4)
+
+        # Label
+        lbl = QLabel("COLOR")
+        lbl.setStyleSheet("color: #666666; font-size: 9px; font-weight: bold; letter-spacing: 1px;")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
+
+        # Swatches grid (2 columns)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._swatches: list[ColourSwatch] = []
+
+        grid_widget = QWidget()
+        grid = QHBoxLayout(grid_widget)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(3)
+
+        col1 = QVBoxLayout()
+        col1.setSpacing(3)
+        col2 = QVBoxLayout()
+        col2.setSpacing(3)
+
+        for i, colour in enumerate(COLOUR_PRESETS):
+            swatch = ColourSwatch(colour)
+            self._swatches.append(swatch)
+            self._group.addButton(swatch)
+            swatch.clicked.connect(lambda _, s=swatch: self._on_swatch_clicked(s))
+            if i % 2 == 0:
+                col1.addWidget(swatch)
+            else:
+                col2.addWidget(swatch)
+
+        grid.addLayout(col1)
+        grid.addLayout(col2)
+        layout.addWidget(grid_widget)
+
+        # Custom colour button
+        self._custom_btn = QPushButton("+")
+        self._custom_btn.setFixedSize(26, 26)
+        self._custom_btn.setToolTip("Custom colour")
+        self._custom_btn.setStyleSheet(
+            "QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+            "stop:0 #ff0000, stop:0.33 #00ff00, stop:0.66 #0000ff, stop:1 #ff00ff);"
+            "border: 2px solid #555; border-radius: 6px; color: white; font-weight: bold; font-size: 14px; }"
+            "QPushButton:hover { border: 2px solid #aaa; }"
+        )
+        self._custom_btn.clicked.connect(self._pick_custom)
+
+        custom_row = QHBoxLayout()
+        custom_row.setContentsMargins(0, 0, 0, 0)
+        custom_row.addStretch()
+        custom_row.addWidget(self._custom_btn)
+        custom_row.addStretch()
+        layout.addLayout(custom_row)
+
+        # Select first by default
+        self._swatches[0].setChecked(True)
+
+    def _on_swatch_clicked(self, swatch: ColourSwatch) -> None:
+        self._selected_colour = swatch.colour()
+        for s in self._swatches:
+            s._refresh_style(s is swatch)
+
+    def _pick_custom(self) -> None:
+        colour = QColorDialog.getColor(
+            self._selected_colour, self, "Pick Colour",
+            QColorDialog.ColorDialogOption.ShowAlphaChannel,
+        )
+        if colour.isValid():
+            self._selected_colour = colour
+            for s in self._swatches:
+                s.setChecked(False)
+                s._refresh_style(False)
+
+    def selected_colour(self) -> QColor:
+        return self._selected_colour
+
+    def set_colour(self, colour: QColor) -> None:
+        self._selected_colour = colour
+        matched = False
+        for s in self._swatches:
+            match = s.colour().name() == colour.name()
+            s.setChecked(match)
+            s._refresh_style(match)
+            if match:
+                matched = True
+        if not matched:
+            for s in self._swatches:
+                s.setChecked(False)
+                s._refresh_style(False)
+
 
 # ==================================================================
 # Arrow Graphics Item
 # ==================================================================
 
 class ArrowItem(QGraphicsItem):
-    def __init__(self, start: QPointF, end: QPointF) -> None:
+    def __init__(self, start: QPointF, end: QPointF, colour: QColor = QColor("#FF3B30")) -> None:
         super().__init__()
-        self._start = start
-        self._end   = end
+        self._start  = start
+        self._end    = end
+        self._colour = colour
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
 
     def update_end(self, end: QPointF) -> None:
@@ -58,10 +208,10 @@ class ArrowItem(QGraphicsItem):
         if self._start == self._end:
             return
 
-        pen = QPen(ARROW_COLOR, ARROW_WIDTH, Qt.PenStyle.SolidLine,
+        pen = QPen(self._colour, ARROW_WIDTH, Qt.PenStyle.SolidLine,
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
-        painter.setBrush(QBrush(ARROW_COLOR))
+        painter.setBrush(QBrush(self._colour))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Shaft
@@ -106,7 +256,7 @@ def _is_dark_at(pixmap: QPixmap, pos: QPointF) -> bool:
 
 
 class TextItem(QGraphicsItem):
-    def __init__(self, pos: QPointF, text: str, dark_bg: bool = True) -> None:
+    def __init__(self, pos: QPointF, text: str, colour: QColor = QColor("#FFD600"), dark_bg: bool = True) -> None:
         super().__init__()
         self._text    = text
         self._font    = QFont("Segoe UI", TEXT_FONT_SIZE, QFont.Weight.Bold)
@@ -202,11 +352,11 @@ _HANDLES = ["tl", "tm", "tr", "ml", "mr", "bl", "bm", "br"]
 
 
 class HighlightItem(QGraphicsItem):
-    def __init__(self, start: QPointF) -> None:
+    def __init__(self, start: QPointF, colour: QColor = QColor("#FFD600")) -> None:
         super().__init__()
         self._r            = QRectF(start, start)
         self._color_index  = 0
-        self._fill, self._border = _HIGHLIGHT_PRESETS[0]
+        self._apply_colour(colour)
         self._resize_handle: str | None = None
         self._resize_start: QPointF | None = None
         self._rect_at_start: QRectF | None = None
@@ -332,6 +482,14 @@ class HighlightItem(QGraphicsItem):
         self._rect_at_start = None
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
         super().mouseReleaseEvent(event)
+
+    def _apply_colour(self, colour: QColor) -> None:
+        fill = QColor(colour)
+        fill.setAlpha(100)
+        border = QColor(colour)
+        border.setAlpha(220)
+        self._fill   = fill
+        self._border = border
 
     def mouseDoubleClickEvent(self, event) -> None:
         self._color_index = (self._color_index + 1) % len(_HIGHLIGHT_PRESETS)
@@ -589,9 +747,9 @@ class AnnotationCanvas(QGraphicsView):
     # Mouse events — arrow drawing
     # ------------------------------------------------------------------
 
-    def add_text_item(self, pos: QPointF, text: str) -> None:
+    def add_text_item(self, pos: QPointF, text: str, colour: QColor = QColor("#FFD600")) -> None:
         dark = _is_dark_at(self._pixmap_item.pixmap(), pos)
-        item = TextItem(pos, text, dark_bg=not dark)
+        item = TextItem(pos, text, colour=colour, dark_bg=not dark)
         self._scene.addItem(item)
         self._annotation_items.append(item)
         self._scene.update()
@@ -599,8 +757,9 @@ class AnnotationCanvas(QGraphicsView):
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._current_tool == "arrow":
             scene_pos = self.mapToScene(event.position().toPoint())
+            colour = self.window()._active_colour("arrow")
             self._drawing = True
-            self._current_item = ArrowItem(scene_pos, scene_pos)
+            self._current_item = ArrowItem(scene_pos, scene_pos, colour)
             self._scene.addItem(self._current_item)
         elif event.button() == Qt.MouseButton.LeftButton and self._current_tool == "highlight":
             scene_pos = self.mapToScene(event.position().toPoint())
@@ -608,8 +767,9 @@ class AnnotationCanvas(QGraphicsView):
             if hit and isinstance(hit, HighlightItem):
                 super().mousePressEvent(event)
             else:
+                colour = self.window()._active_colour("highlight")
                 self._drawing = True
-                self._current_item = HighlightItem(scene_pos)
+                self._current_item = HighlightItem(scene_pos, colour)
                 self._current_item.setSelected(True)
                 self._scene.addItem(self._current_item)
         elif event.button() == Qt.MouseButton.LeftButton and self._current_tool == "blur":
@@ -852,10 +1012,33 @@ class AnnotationEditor(QDialog):
 
         layout.addStretch()
 
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("color: #333333;")
-        layout.addWidget(line)
+        # Divider
+        line1 = QFrame()
+        line1.setFrameShape(QFrame.Shape.HLine)
+        line1.setStyleSheet("color: #333333;")
+        layout.addWidget(line1)
+        layout.addSpacing(4)
+
+        # Single colour button
+        lbl = QLabel("COLOR")
+        lbl.setStyleSheet("color: #666666; font-size: 9px; font-weight: bold; letter-spacing: 1px;")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
+
+        self._active_color: QColor = QColor("#FF3B30")
+        self._colour_btn = QPushButton()
+        self._colour_btn.setFixedSize(44, 44)
+        self._colour_btn.setToolTip("Pick annotation colour")
+        self._colour_btn.clicked.connect(self._pick_colour)
+        self._refresh_colour_btn()
+        layout.addWidget(self._colour_btn)
+
+        layout.addSpacing(4)
+
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.Shape.HLine)
+        line2.setStyleSheet("color: #333333;")
+        layout.addWidget(line2)
         layout.addSpacing(4)
 
         self._btn_undo = _tool_btn("undo.svg", "Undo  (Ctrl+Z)", checkable=False)
@@ -961,6 +1144,25 @@ class AnnotationEditor(QDialog):
             "blur":      "Click & drag to blur sensitive data  ·  Ctrl+Z to undo",
         }
         self._hint_label.setText(hints.get(tool, ""))
+
+    def _active_colour(self, tool: str) -> QColor:
+        return self._active_color
+
+    def _pick_colour(self) -> None:
+        colour = QColorDialog.getColor(
+            self._active_color, self, "Pick Annotation Colour",
+        )
+        if colour.isValid():
+            self._active_color = colour
+            self._refresh_colour_btn()
+
+    def _refresh_colour_btn(self) -> None:
+        c = self._active_color.name()
+        self._colour_btn.setStyleSheet(
+            f"QPushButton {{ background: {c}; border: 3px solid #555555;"
+            f"border-radius: 10px; }}"
+            f"QPushButton:hover {{ border: 3px solid #aaaaaa; }}"
+        )
 
     def _update_zoom_label(self, zoom: float) -> None:
         self._zoom_label.setText(f"{int(zoom * 100)}%")
