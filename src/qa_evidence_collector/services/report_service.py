@@ -18,12 +18,17 @@ class ReportService:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        safe_name = "".join(
-            c if c.isalnum() or c in " _-" else "_"
-            for c in session.session_name
-        ).strip()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{safe_name}_{timestamp}.docx"
+        # Use Test Case ID only (short, safe) + sequential number
+        base = session.test_case_id if session.test_case_id else session.session_name
+        safe_base = "".join(
+            c if c.isalnum() or c in "_-" else "_"
+            for c in base
+        ).strip("_")
+
+        # Find next sequential number in the folder
+        existing = list(output_dir.glob(f"{safe_base}_*.docx"))
+        next_num = len(existing) + 1
+        filename = f"{safe_base}_{next_num:02d}.docx"
         filepath = output_dir / filename
 
         doc.save(str(filepath))

@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,
 )
 from PySide6.QtCore import Qt, QPoint, QTimer, Signal
+from PySide6.QtGui import QColor
 
 from qa_evidence_collector.config.settings import Settings
 from qa_evidence_collector.core.session_manager import SessionManager
@@ -28,6 +29,7 @@ class FloatingToolbar(QWidget):
         self._storage_svc = StorageService()
         self._hotkey_mgr = HotkeyManager()
         self._hotkey_triggered.connect(self._on_capture_step)
+        self._last_annotation_colour = QColor("#FF3B30")
         self._apply_hotkey()
 
         self._drag_pos: QPoint | None = None
@@ -211,7 +213,8 @@ class FloatingToolbar(QWidget):
         try:
             next_number = len(self._session.steps) + 1
             path = self._screenshot_svc.capture_fullscreen(
-                self._session.session_name, next_number
+                self._session.session_name, next_number,
+                self._session.test_case_id,
             )
         except Exception as exc:
             self.show()
@@ -220,12 +223,13 @@ class FloatingToolbar(QWidget):
 
         self.show()
 
-        # Annotation step
-        annotator = AnnotationEditor(path, next_number, self)
+        # Annotation step — pass last used colour, read it back after
+        annotator = AnnotationEditor(path, next_number, self._last_annotation_colour, self)
         if annotator.exec():
             final_path = annotator.annotated_path()
         else:
             final_path = path  # skip annotation, use original
+        self._last_annotation_colour = annotator.selected_colour()
 
         # Note step
         dialog = NoteDialog(next_number, final_path, self)
@@ -243,7 +247,9 @@ class FloatingToolbar(QWidget):
             QMessageBox.warning(self, "No Steps", "Capture at least one step before generating a report.")
             return
 
-        output_dir = self._screenshot_svc.session_folder(self._session.session_name)
+        output_dir = self._screenshot_svc.session_folder(
+            self._session.session_name, self._session.test_case_id
+        )
         try:
             path = self._report_svc.generate(self._session, output_dir)
         except Exception as exc:

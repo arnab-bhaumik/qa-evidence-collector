@@ -941,11 +941,13 @@ def _action_btn(label: str, color: str) -> QPushButton:
 # ==================================================================
 
 class AnnotationEditor(QDialog):
-    def __init__(self, screenshot_path: str, step_number: int, parent=None) -> None:
+    def __init__(self, screenshot_path: str, step_number: int,
+                 initial_colour: QColor | None = None, parent=None) -> None:
         super().__init__(parent)
-        self._screenshot_path = screenshot_path
-        self._step_number = step_number
+        self._screenshot_path  = screenshot_path
+        self._step_number      = step_number
         self._annotated_path: str = screenshot_path
+        self._initial_colour   = initial_colour or QColor("#FF3B30")
 
         self.setWindowTitle(f"Annotate — Step {step_number}")
         self.setMinimumSize(1000, 680)
@@ -954,6 +956,8 @@ class AnnotationEditor(QDialog):
         )
         self.setStyleSheet("QDialog { background: #1e1e1e; }")
         self._build_ui()
+        self._active_color = self._initial_colour
+        self._refresh_colour_btn()
 
     # ------------------------------------------------------------------
     # UI
@@ -1211,3 +1215,6 @@ class AnnotationEditor(QDialog):
 
     def annotated_path(self) -> str:
         return self._annotated_path
+
+    def selected_colour(self) -> QColor:
+        return self._active_color
