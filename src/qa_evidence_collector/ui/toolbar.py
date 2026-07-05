@@ -65,6 +65,7 @@ class FloatingToolbar(QWidget):
         self._hotkey_triggered.connect(self._on_capture_step)
         self._last_annotation_colour = QColor("#FF3B30")
         self._last_report_path: str = ""
+        self._keep_local_file: bool = True
         self._apply_hotkey()
 
         self._drag_pos: QPoint | None = None
@@ -303,6 +304,7 @@ class FloatingToolbar(QWidget):
             return
 
         self._last_report_path = path
+        self._keep_local_file = self._settings.output_save_to_folder
         self._storage_svc.clear()
         self._update_button_states()
 
@@ -316,6 +318,10 @@ class FloatingToolbar(QWidget):
             if result == QMessageBox.StandardButton.Open:
                 import os
                 os.startfile(path)
+
+        # Auto-open upload dialog if only Jira upload is selected
+        if self._settings.output_upload_to_jira and not self._settings.output_save_to_folder:
+            self._on_upload_to_jira()
 
     def _on_upload_to_jira(self) -> None:
         if not self._last_report_path:
@@ -346,6 +352,13 @@ class FloatingToolbar(QWidget):
         self.btn_upload_jira.setText("Upload to Jira")
 
         if success:
+            # Delete local file if user chose Jira-only output
+            if not self._keep_local_file:
+                from pathlib import Path
+                Path(self._last_report_path).unlink(missing_ok=True)
+                self._last_report_path = ""
+                self._update_button_states()
+
             issue_url = result
             msg = QMessageBox(self)
             msg.setWindowTitle("Uploaded Successfully")
