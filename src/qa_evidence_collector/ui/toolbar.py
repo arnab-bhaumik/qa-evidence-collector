@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,
 )
-from PySide6.QtCore import Qt, QPoint, QTimer, Signal
+from PySide6.QtCore import Qt, QPoint, QTimer, Signal, QThread
 from PySide6.QtGui import QColor
 
 from qa_evidence_collector.config.settings import Settings
@@ -17,6 +17,38 @@ from qa_evidence_collector.ui.annotation_editor import AnnotationEditor
 from qa_evidence_collector.ui.test_result_dialog import TestResultDialog
 from qa_evidence_collector.ui.issue_key_dialog import IssueKeyDialog
 from qa_evidence_collector.services.storage_service import StorageService
+from qa_evidence_collector.services.jira_service import JiraService
+
+
+class _JiraUploadThread(QThread):
+    upload_done = Signal(bool, str)   # (success, issue_url_or_error)
+    comment_done = Signal(bool, str)
+
+    def __init__(self, settings, issue_key: str, file_path: str, comment: str) -> None:
+        super().__init__()
+        self._settings = settings
+        self._issue_key = issue_key
+        self._file_path = file_path
+        self._comment = comment
+
+    def run(self) -> None:
+        svc = JiraService()
+        ok, result = svc.upload_attachment(
+            self._settings.jira_url,
+            self._settings.jira_email,
+            self._settings.jira_api_token,
+            self._issue_key,
+            self._file_path,
+        )
+        self.upload_done.emit(ok, result)
+        if ok and self._comment:
+            svc.post_comment(
+                self._settings.jira_url,
+                self._settings.jira_email,
+                self._settings.jira_api_token,
+                self._issue_key,
+                self._comment,
+            )
 
 
 class FloatingToolbar(QWidget):
@@ -289,8 +321,44 @@ class FloatingToolbar(QWidget):
         if not self._last_report_path:
             QMessageBox.warning(self, "No Report", "Generate a report first before uploading to Jira.")
             return
+
         dialog = IssueKeyDialog(self._last_report_path, self)
-        dialog.exec()
+        if not dialog.exec():
+            return
+
+        issue_key = dialog.issue_key()
+        comment   = dialog.comment()
+
+        # Disable button, show uploading state
+        self.btn_upload_jira.setEnabled(False)
+        self.btn_upload_jira.setText("Uploading…")
+
+        self._upload_thread = _JiraUploadThread(
+            self._settings, issue_key, self._last_report_path, comment
+        )
+        self._upload_thread.upload_done.connect(
+            lambda ok, result: self._on_upload_done(ok, result, issue_key)
+        )
+        self._upload_thread.start()
+
+    def _on_upload_done(self, success: bool, result: str, issue_key: str) -> None:
+        self.btn_upload_jira.setEnabled(True)
+        self.btn_upload_jira.setText("Upload to Jira")
+
+        if success:
+            issue_url = result
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Uploaded Successfully")
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setText(
+                f"Report uploaded to <b>{issue_key}</b> successfully.\n\n"
+                f"<a href='{issue_url}'>{issue_url}</a>"
+            )
+            msg.setTextFormat(Qt.TextFormat.RichText)
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.exec()
+        else:
+            QMessageBox.critical(self, "Upload Failed", result)
 
     def _on_view_steps(self) -> None:
         dialog = StepListView(self._session, self)
