@@ -106,19 +106,12 @@ class SettingsDialog(QDialog):
         self.jira_email_input.setPlaceholderText("your-email@company.com")
         jira_form.addRow("Email:", self.jira_email_input)
 
-        # API Token with Show/Hide toggle
-        token_row = QHBoxLayout()
+        # API Token — always masked
         self.jira_token_input = QLineEdit()
         self.jira_token_input.setFixedHeight(30)
         self.jira_token_input.setPlaceholderText("Paste your Atlassian API token")
         self.jira_token_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._token_visible = False
-        self.toggle_token_btn = QPushButton("Show")
-        self.toggle_token_btn.setFixedSize(50, 30)
-        self.toggle_token_btn.clicked.connect(self._toggle_token)
-        token_row.addWidget(self.jira_token_input)
-        token_row.addWidget(self.toggle_token_btn)
-        jira_form.addRow("API Token:", token_row)
+        jira_form.addRow("API Token:", self.jira_token_input)
 
         token_hint = QLabel(
             "Generate your token at "
@@ -174,14 +167,6 @@ class SettingsDialog(QDialog):
         )
         if folder:
             self.dir_input.setText(folder)
-
-    def _toggle_token(self) -> None:
-        self._token_visible = not self._token_visible
-        self.jira_token_input.setEchoMode(
-            QLineEdit.EchoMode.Normal if self._token_visible
-            else QLineEdit.EchoMode.Password
-        )
-        self.toggle_token_btn.setText("Hide" if self._token_visible else "Show")
 
     def _test_connection(self) -> None:
         url   = self.jira_url_input.text().strip()
