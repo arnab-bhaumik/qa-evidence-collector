@@ -2,9 +2,24 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
     QHBoxLayout, QLabel, QCheckBox, QFileDialog, QGroupBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 
 from qa_evidence_collector.config.settings import Settings
+from qa_evidence_collector.services.jira_service import JiraService
+
+
+class _TestConnectionThread(QThread):
+    result_ready = Signal(bool, str)
+
+    def __init__(self, url: str, email: str, token: str) -> None:
+        super().__init__()
+        self._url = url
+        self._email = email
+        self._token = token
+
+    def run(self) -> None:
+        ok, msg = JiraService().test_connection(self._url, self._email, self._token)
+        self.result_ready.emit(ok, msg)
 
 
 class SettingsDialog(QDialog):
@@ -115,6 +130,18 @@ class SettingsDialog(QDialog):
         token_hint.setOpenExternalLinks(True)
         jira_form.addRow(token_hint)
 
+        # Test Connection button + inline status
+        test_conn_row = QHBoxLayout()
+        self.test_conn_btn = QPushButton("Test Connection")
+        self.test_conn_btn.setFixedHeight(30)
+        self.test_conn_btn.clicked.connect(self._test_connection)
+        self._conn_status = QLabel()
+        self._conn_status.setStyleSheet("font-size: 11px;")
+        test_conn_row.addWidget(self.test_conn_btn)
+        test_conn_row.addSpacing(10)
+        test_conn_row.addWidget(self._conn_status, 1)
+        jira_form.addRow(test_conn_row)
+
         jira_btn_row = QHBoxLayout()
         jira_btn_row.addStretch()
         jira_cancel_btn = QPushButton("Cancel")
@@ -155,6 +182,26 @@ class SettingsDialog(QDialog):
             else QLineEdit.EchoMode.Password
         )
         self.toggle_token_btn.setText("Hide" if self._token_visible else "Show")
+
+    def _test_connection(self) -> None:
+        url   = self.jira_url_input.text().strip()
+        email = self.jira_email_input.text().strip()
+        token = self.jira_token_input.text().strip()
+
+        self.test_conn_btn.setEnabled(False)
+        self.test_conn_btn.setText("Testing…")
+        self._conn_status.setText("")
+
+        self._conn_thread = _TestConnectionThread(url, email, token)
+        self._conn_thread.result_ready.connect(self._on_connection_result)
+        self._conn_thread.start()
+
+    def _on_connection_result(self, success: bool, message: str) -> None:
+        self.test_conn_btn.setEnabled(True)
+        self.test_conn_btn.setText("Test Connection")
+        color = "#27ae60" if success else "#e74c3c"
+        self._conn_status.setStyleSheet(f"font-size: 11px; color: {color};")
+        self._conn_status.setText(message)
 
     def _save_hotkey(self) -> None:
         self._settings.capture_hotkey = self.hotkey_input.text().strip()
