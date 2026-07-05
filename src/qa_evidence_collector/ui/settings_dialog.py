@@ -62,6 +62,15 @@ class SettingsDialog(QDialog):
         hotkey_form.addRow(hint)
 
         self.hotkey_enabled_cb.toggled.connect(self.hotkey_input.setEnabled)
+
+        hotkey_btn_row = QHBoxLayout()
+        hotkey_btn_row.addStretch()
+        hotkey_save_btn = QPushButton("Save")
+        hotkey_save_btn.setFixedHeight(30)
+        hotkey_save_btn.clicked.connect(self._save_hotkey)
+        hotkey_btn_row.addWidget(hotkey_save_btn)
+        hotkey_form.addRow(hotkey_btn_row)
+
         layout.addWidget(hotkey_group)
 
         # --- Jira Configuration ---
@@ -107,6 +116,18 @@ class SettingsDialog(QDialog):
         token_hint.setOpenExternalLinks(True)
         jira_form.addRow(token_hint)
 
+        jira_btn_row = QHBoxLayout()
+        jira_btn_row.addStretch()
+        jira_cancel_btn = QPushButton("Cancel")
+        jira_cancel_btn.setFixedHeight(30)
+        jira_cancel_btn.clicked.connect(self._cancel_jira)
+        jira_save_btn = QPushButton("Save")
+        jira_save_btn.setFixedHeight(30)
+        jira_save_btn.clicked.connect(self._save_jira)
+        jira_btn_row.addWidget(jira_cancel_btn)
+        jira_btn_row.addWidget(jira_save_btn)
+        jira_form.addRow(jira_btn_row)
+
         layout.addWidget(jira_group)
 
         # --- Buttons ---
@@ -143,6 +164,24 @@ class SettingsDialog(QDialog):
             else QLineEdit.EchoMode.Password
         )
         self.toggle_token_btn.setText("Hide" if self._token_visible else "Show")
+
+    def _save_hotkey(self) -> None:
+        self._settings.capture_hotkey = self.hotkey_input.text().strip()
+        self._settings.hotkey_enabled = self.hotkey_enabled_cb.isChecked()
+        self._settings.save()
+
+    def _save_jira(self) -> None:
+        self._settings.jira_url = self.jira_url_input.text().strip()
+        self._settings.jira_project_key = self.jira_project_input.text().strip()
+        self._settings.jira_email = self.jira_email_input.text().strip()
+        self._settings.jira_api_token = self.jira_token_input.text().strip()
+        self._settings.save()
+
+    def _cancel_jira(self) -> None:
+        self.jira_url_input.setText(self._settings.jira_url)
+        self.jira_project_input.setText(self._settings.jira_project_key)
+        self.jira_email_input.setText(self._settings.jira_email)
+        self.jira_token_input.setText(self._settings.jira_api_token)
 
     def _save(self) -> None:
         self._settings.output_dir = self.dir_input.text().strip()
