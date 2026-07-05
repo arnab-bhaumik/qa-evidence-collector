@@ -352,10 +352,12 @@ class FloatingToolbar(QWidget):
         self.btn_upload_jira.setText("Upload to Jira")
 
         if success:
-            # Delete local file if user chose Jira-only output
+            # Delete entire session folder if user chose Jira-only output
             if not self._keep_local_file:
+                import shutil
                 from pathlib import Path
-                Path(self._last_report_path).unlink(missing_ok=True)
+                session_folder = Path(self._last_report_path).parent
+                shutil.rmtree(session_folder, ignore_errors=True)
                 self._last_report_path = ""
                 self._update_button_states()
 
