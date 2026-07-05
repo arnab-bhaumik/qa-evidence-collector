@@ -1,7 +1,6 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
-    QHBoxLayout, QLabel, QCheckBox, QFileDialog, QDialogButtonBox,
-    QGroupBox,
+    QHBoxLayout, QLabel, QCheckBox, QFileDialog, QGroupBox,
 )
 from PySide6.QtCore import Qt
 
@@ -130,14 +129,6 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(jira_group)
 
-        # --- Buttons ---
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save |
-            QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._save)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
 
     def _load_values(self) -> None:
         self.dir_input.setText(self._settings.output_dir)
