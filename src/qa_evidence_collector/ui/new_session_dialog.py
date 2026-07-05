@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit,
-    QDialogButtonBox,
+    QDialogButtonBox, QTextEdit,
 )
 from PySide6.QtCore import Qt
 
@@ -9,7 +9,7 @@ class NewSessionDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("New Session")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(420)
         self.setWindowFlags(
             self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint
         )
@@ -25,9 +25,10 @@ class NewSessionDialog(QDialog):
         self.tc_id_input.setFixedHeight(32)
         form.addRow("Test Case ID:", self.tc_id_input)
 
-        self.objective_input = QLineEdit()
+        self.objective_input = QTextEdit()
         self.objective_input.setPlaceholderText("e.g. Verify user can log in with valid credentials")
-        self.objective_input.setFixedHeight(32)
+        self.objective_input.setFixedHeight(80)
+        self.objective_input.setAcceptRichText(False)
         form.addRow("Test Objective:", self.objective_input)
 
         layout.addLayout(form)
@@ -43,7 +44,7 @@ class NewSessionDialog(QDialog):
 
     def session_name(self) -> str:
         tc_id = self.tc_id_input.text().strip()
-        objective = self.objective_input.text().strip()
+        objective = self.objective_input.toPlainText().strip()
         if tc_id and objective:
             return f"{tc_id} — {objective}"
         return tc_id or objective or "Untitled Session"
@@ -52,4 +53,4 @@ class NewSessionDialog(QDialog):
         return self.tc_id_input.text().strip()
 
     def test_objective(self) -> str:
-        return self.objective_input.text().strip()
+        return self.objective_input.toPlainText().strip()

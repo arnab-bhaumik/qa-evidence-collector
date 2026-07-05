@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,
 )
 from PySide6.QtCore import Qt, QPoint, QTimer, Signal
+from PySide6.QtGui import QColor
 
 from qa_evidence_collector.config.settings import Settings
 from qa_evidence_collector.core.session_manager import SessionManager
@@ -12,6 +13,8 @@ from qa_evidence_collector.ui.new_session_dialog import NewSessionDialog
 from qa_evidence_collector.ui.note_dialog import NoteDialog
 from qa_evidence_collector.ui.step_list_view import StepListView
 from qa_evidence_collector.ui.settings_dialog import SettingsDialog
+from qa_evidence_collector.ui.annotation_editor import AnnotationEditor
+from qa_evidence_collector.ui.test_result_dialog import TestResultDialog
 from qa_evidence_collector.services.storage_service import StorageService
 
 
@@ -27,6 +30,7 @@ class FloatingToolbar(QWidget):
         self._storage_svc = StorageService()
         self._hotkey_mgr = HotkeyManager()
         self._hotkey_triggered.connect(self._on_capture_step)
+        self._last_annotation_colour = QColor("#FF3B30")
         self._apply_hotkey()
 
         self._drag_pos: QPoint | None = None
@@ -210,7 +214,8 @@ class FloatingToolbar(QWidget):
         try:
             next_number = len(self._session.steps) + 1
             path = self._screenshot_svc.capture_fullscreen(
-                self._session.session_name, next_number
+                self._session.session_name, next_number,
+                self._session.test_case_id,
             )
         except Exception as exc:
             self.show()
@@ -219,13 +224,22 @@ class FloatingToolbar(QWidget):
 
         self.show()
 
-        dialog = NoteDialog(next_number, path, self)
+        # Annotation step — pass last used colour, read it back after
+        annotator = AnnotationEditor(path, next_number, self._last_annotation_colour, self)
+        if annotator.exec():
+            final_path = annotator.annotated_path()
+        else:
+            final_path = path  # skip annotation, use original
+        self._last_annotation_colour = annotator.selected_colour()
+
+        # Note step
+        dialog = NoteDialog(next_number, final_path, self)
         if dialog.exec():
-            self._session.add_step(path, dialog.note())
+            self._session.add_step(final_path, dialog.note())
             self._storage_svc.save(self._session)
         else:
             from pathlib import Path
-            Path(path).unlink(missing_ok=True)
+            Path(final_path).unlink(missing_ok=True)
 
         self._update_button_states()
 
@@ -234,7 +248,15 @@ class FloatingToolbar(QWidget):
             QMessageBox.warning(self, "No Steps", "Capture at least one step before generating a report.")
             return
 
-        output_dir = self._screenshot_svc.session_folder(self._session.session_name)
+        # Ask for Pass / Fail before generating
+        result_dialog = TestResultDialog(self)
+        if not result_dialog.exec():
+            return
+        self._session.status = result_dialog.result_status()
+
+        output_dir = self._screenshot_svc.session_folder(
+            self._session.session_name, self._session.test_case_id
+        )
         try:
             path = self._report_svc.generate(self._session, output_dir)
         except Exception as exc:

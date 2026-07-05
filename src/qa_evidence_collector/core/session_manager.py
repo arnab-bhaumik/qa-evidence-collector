@@ -11,6 +11,7 @@ class SessionManager:
         self.session_name: str = ""
         self.test_case_id: str = ""
         self.test_objective: str = ""
+        self.status: str = "NOT SET"
         self.created_at: datetime | None = None
         self.steps: list[Step] = []
         self._active: bool = False
@@ -23,6 +24,7 @@ class SessionManager:
         self.session_name = name.strip() or "Untitled Session"
         self.test_case_id = test_case_id.strip()
         self.test_objective = test_objective.strip()
+        self.status = "NOT SET"
         self.created_at = datetime.now()
         self.steps = []
         self._active = True
@@ -76,6 +78,7 @@ class SessionManager:
             "session_name": self.session_name,
             "test_case_id": self.test_case_id,
             "test_objective": self.test_objective,
+            "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "active": self._active,
             "steps": [s.to_dict() for s in self.steps],
@@ -85,6 +88,7 @@ class SessionManager:
         self.session_name = data.get("session_name", "")
         self.test_case_id = data.get("test_case_id", "")
         self.test_objective = data.get("test_objective", "")
+        self.status = data.get("status", "NOT SET")
         created = data.get("created_at")
         self.created_at = datetime.fromisoformat(created) if created else None
         self._active = data.get("active", False)

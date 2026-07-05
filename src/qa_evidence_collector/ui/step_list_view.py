@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QWidget, QFrame, QMessageBox, QTextEdit,
-    QDialogButtonBox, QLineEdit, QFormLayout,
+    QDialogButtonBox, QLineEdit, QFormLayout, QSizePolicy,
 )
 from PySide6.QtGui import QPixmap, QIcon
 from PySide6.QtCore import Qt
@@ -168,8 +168,10 @@ class EditSessionDialog(QDialog):
         self.tc_id_input.setFixedHeight(32)
         form.addRow("Test Case ID:", self.tc_id_input)
 
-        self.objective_input = QLineEdit(session.test_objective)
-        self.objective_input.setFixedHeight(32)
+        self.objective_input = QTextEdit()
+        self.objective_input.setPlainText(session.test_objective)
+        self.objective_input.setFixedHeight(80)
+        self.objective_input.setAcceptRichText(False)
         form.addRow("Test Objective:", self.objective_input)
 
         layout.addLayout(form)
@@ -186,7 +188,7 @@ class EditSessionDialog(QDialog):
         return self.tc_id_input.text().strip()
 
     def test_objective(self) -> str:
-        return self.objective_input.text().strip()
+        return self.objective_input.toPlainText().strip()
 
 
 class StepListView(QDialog):
@@ -204,43 +206,82 @@ class StepListView(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
-        # Session info header
+        # Session info header — modern card
         session_frame = QFrame()
+        session_frame.setObjectName("sessionCard")
         session_frame.setStyleSheet(
-            "QFrame { background: #eaf2fb; border: 1px solid #aed6f1; border-radius: 6px; }"
+            "QFrame#sessionCard {"
+            "background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            "stop:0 #1a73e8, stop:1 #1558b0);"
+            "border-radius: 12px;"
+            "}"
         )
-        session_layout = QHBoxLayout(session_frame)
-        session_layout.setContentsMargins(12, 8, 12, 8)
+        session_frame.setFixedHeight(76)
 
+        outer = QHBoxLayout(session_frame)
+        outer.setContentsMargins(14, 0, 14, 0)
+        outer.setSpacing(12)
+
+        # Left — TC badge
+        badge = QLabel("TC")
+        badge.setFixedSize(36, 36)
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setStyleSheet(
+            "QLabel { background: rgba(255,255,255,0.18); border-radius: 8px;"
+            "color: white; font-size: 10px; font-weight: bold; letter-spacing: 1px; }"
+        )
+        outer.addWidget(badge)
+
+        # Divider line
+        div = QFrame()
+        div.setFrameShape(QFrame.Shape.VLine)
+        div.setStyleSheet("color: rgba(255,255,255,0.2);")
+        div.setFixedHeight(36)
+        outer.addWidget(div)
+
+        # Centre — two rows
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(3)
+        info_layout.setSpacing(1)
+        info_layout.setContentsMargins(0, 0, 0, 0)
 
         self._tc_id_label = QLabel()
-        self._tc_id_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #1a5276;")
+        self._tc_id_label.setStyleSheet(
+            "color: white; font-size: 13px; font-weight: bold; background: transparent;"
+        )
+        self._tc_id_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         info_layout.addWidget(self._tc_id_label)
 
         self._objective_label = QLabel()
-        self._objective_label.setStyleSheet("font-size: 12px; color: #2c3e50;")
+        self._objective_label.setStyleSheet(
+            "color: rgba(255,255,255,0.75); font-size: 11px; background: transparent;"
+        )
+        self._objective_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._objective_label.setWordWrap(True)
+        self._objective_label.setMaximumHeight(36)
         info_layout.addWidget(self._objective_label)
 
-        session_layout.addLayout(info_layout, stretch=1)
+        outer.addLayout(info_layout, stretch=1)
 
+        # Right — edit button
         edit_session_btn = QPushButton()
         edit_session_btn.setIcon(QIcon(str(_ICONS_DIR / "edit.svg")))
-        edit_session_btn.setFixedSize(30, 30)
+        edit_session_btn.setFixedSize(32, 32)
         edit_session_btn.setToolTip("Edit Test Case ID and Objective")
         edit_session_btn.setStyleSheet(
-            "QPushButton { border: 1px solid #aed6f1; border-radius: 4px; background: white; }"
-            "QPushButton:hover { background: #d6eaf8; }"
+            "QPushButton { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);"
+            "border-radius: 8px; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.28); border: 1px solid rgba(255,255,255,0.5); }"
         )
         edit_session_btn.clicked.connect(self._edit_session_info)
-        session_layout.addWidget(edit_session_btn)
+        outer.addWidget(edit_session_btn)
 
         layout.addWidget(session_frame)
 
-        # Step count header
+        # Step count pill
         self._header = QLabel()
-        self._header.setStyleSheet("font-size: 13px; padding: 2px 0;")
+        self._header.setStyleSheet(
+            "font-size: 12px; color: #666; padding: 0px 2px;"
+        )
         layout.addWidget(self._header)
 
         self._scroll_area = QScrollArea()
@@ -267,12 +308,11 @@ class StepListView(QDialog):
             self._refresh_cards()
 
     def _refresh_cards(self) -> None:
-        self._tc_id_label.setText(f"Test Case ID: {self._session.test_case_id or '—'}")
-        self._objective_label.setText(f"Test Objective: {self._session.test_objective or '—'}")
-        self._header.setText(
-            f"<b>{self._session.session_name}</b> &nbsp;·&nbsp; "
-            f"{len(self._session.steps)} step(s)"
-        )
+        self._tc_id_label.setText(self._session.test_case_id or "Untitled Session")
+        obj = self._session.test_objective or "No objective set"
+        self._objective_label.setText(obj)
+        self._objective_label.setToolTip(obj)
+        self._header.setText(f"{len(self._session.steps)} step(s) captured")
 
         container = QWidget()
         vbox = QVBoxLayout(container)
