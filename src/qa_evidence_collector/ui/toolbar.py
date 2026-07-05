@@ -44,7 +44,7 @@ class FloatingToolbar(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setFixedHeight(64)
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(460)
 
         self._build_ui()
         self._apply_style()
@@ -332,10 +332,9 @@ class FloatingToolbar(QWidget):
         )
         self.btn_upload_jira.setVisible(show_jira)
         self.btn_upload_jira.setEnabled(show_jira and bool(self._last_report_path))
-        if show_jira:
-            self.setMinimumWidth(520)
-        else:
-            self.setMinimumWidth(420)
+        target_width = 620 if show_jira else 460
+        self.setMinimumWidth(target_width)
+        self.resize(target_width, self.height())
 
     # ------------------------------------------------------------------
     # Drag to move
