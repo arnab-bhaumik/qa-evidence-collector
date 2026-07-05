@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
     QHBoxLayout, QLabel, QCheckBox, QFileDialog, QGroupBox,
+    QDialogButtonBox,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 
@@ -76,15 +77,6 @@ class SettingsDialog(QDialog):
         hotkey_form.addRow(hint)
 
         self.hotkey_enabled_cb.toggled.connect(self.hotkey_input.setEnabled)
-
-        hotkey_btn_row = QHBoxLayout()
-        hotkey_btn_row.addStretch()
-        hotkey_save_btn = QPushButton("Save")
-        hotkey_save_btn.setFixedHeight(30)
-        hotkey_save_btn.clicked.connect(self._save_hotkey)
-        hotkey_btn_row.addWidget(hotkey_save_btn)
-        hotkey_form.addRow(hotkey_btn_row)
-
         layout.addWidget(hotkey_group)
 
         # --- Jira Configuration ---
@@ -106,7 +98,6 @@ class SettingsDialog(QDialog):
         self.jira_email_input.setPlaceholderText("your-email@company.com")
         jira_form.addRow("Email:", self.jira_email_input)
 
-        # API Token — always masked
         self.jira_token_input = QLineEdit()
         self.jira_token_input.setFixedHeight(30)
         self.jira_token_input.setPlaceholderText("Paste your Atlassian API token")
@@ -135,20 +126,16 @@ class SettingsDialog(QDialog):
         test_conn_row.addWidget(self._conn_status, 1)
         jira_form.addRow(test_conn_row)
 
-        jira_btn_row = QHBoxLayout()
-        jira_btn_row.addStretch()
-        jira_cancel_btn = QPushButton("Cancel")
-        jira_cancel_btn.setFixedHeight(30)
-        jira_cancel_btn.clicked.connect(self._cancel_jira)
-        jira_save_btn = QPushButton("Save")
-        jira_save_btn.setFixedHeight(30)
-        jira_save_btn.clicked.connect(self._save_jira)
-        jira_btn_row.addWidget(jira_cancel_btn)
-        jira_btn_row.addWidget(jira_save_btn)
-        jira_form.addRow(jira_btn_row)
-
         layout.addWidget(jira_group)
 
+        # --- Global Save / Cancel ---
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save |
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
     def _load_values(self) -> None:
         self.dir_input.setText(self._settings.output_dir)
@@ -187,24 +174,6 @@ class SettingsDialog(QDialog):
         color = "#27ae60" if success else "#e74c3c"
         self._conn_status.setStyleSheet(f"font-size: 11px; color: {color};")
         self._conn_status.setText(message)
-
-    def _save_hotkey(self) -> None:
-        self._settings.capture_hotkey = self.hotkey_input.text().strip()
-        self._settings.hotkey_enabled = self.hotkey_enabled_cb.isChecked()
-        self._settings.save()
-
-    def _save_jira(self) -> None:
-        self._settings.jira_url = self.jira_url_input.text().strip()
-        self._settings.jira_project_key = self.jira_project_input.text().strip()
-        self._settings.jira_email = self.jira_email_input.text().strip()
-        self._settings.jira_api_token = self.jira_token_input.text().strip()
-        self._settings.save()
-
-    def _cancel_jira(self) -> None:
-        self.jira_url_input.setText(self._settings.jira_url)
-        self.jira_project_input.setText(self._settings.jira_project_key)
-        self.jira_email_input.setText(self._settings.jira_email)
-        self.jira_token_input.setText(self._settings.jira_api_token)
 
     def _save(self) -> None:
         self._settings.output_dir = self.dir_input.text().strip()
