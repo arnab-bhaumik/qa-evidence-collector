@@ -8,6 +8,10 @@ _DEFAULT_SETTINGS = {
     "output_dir": str(Path.home() / "QAEvidence"),
     "capture_hotkey": "<ctrl>+<shift>+s",
     "hotkey_enabled": True,
+    "jira_url": "",
+    "jira_project_key": "",
+    "jira_email": "",
+    "jira_api_token": "",
 }
 
 _SETTINGS_FILE = Path.home() / ".qa_evidence_collector" / "settings.json"
@@ -19,7 +23,7 @@ class Settings:
         self.load()
 
     # ------------------------------------------------------------------
-    # Properties
+    # Properties — General
     # ------------------------------------------------------------------
 
     @property
@@ -45,6 +49,46 @@ class Settings:
     @hotkey_enabled.setter
     def hotkey_enabled(self, value: bool) -> None:
         self._data["hotkey_enabled"] = value
+
+    # ------------------------------------------------------------------
+    # Properties — Jira
+    # ------------------------------------------------------------------
+
+    @property
+    def jira_url(self) -> str:
+        return self._data.get("jira_url", "")
+
+    @jira_url.setter
+    def jira_url(self, value: str) -> None:
+        self._data["jira_url"] = value.rstrip("/")
+
+    @property
+    def jira_project_key(self) -> str:
+        return self._data.get("jira_project_key", "")
+
+    @jira_project_key.setter
+    def jira_project_key(self, value: str) -> None:
+        self._data["jira_project_key"] = value.upper().strip()
+
+    @property
+    def jira_email(self) -> str:
+        return self._data.get("jira_email", "")
+
+    @jira_email.setter
+    def jira_email(self, value: str) -> None:
+        self._data["jira_email"] = value.strip()
+
+    @property
+    def jira_api_token(self) -> str:
+        return self._data.get("jira_api_token", "")
+
+    @jira_api_token.setter
+    def jira_api_token(self, value: str) -> None:
+        self._data["jira_api_token"] = value.strip()
+
+    @property
+    def jira_configured(self) -> bool:
+        return bool(self.jira_url and self.jira_email and self.jira_api_token)
 
     # ------------------------------------------------------------------
     # Persistence
