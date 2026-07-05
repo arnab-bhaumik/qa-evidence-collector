@@ -12,6 +12,8 @@ _DEFAULT_SETTINGS = {
     "jira_project_key": "",
     "jira_email": "",
     "jira_api_token": "",
+    "output_save_to_folder": True,
+    "output_upload_to_jira": False,
 }
 
 _SETTINGS_FILE = Path.home() / ".qa_evidence_collector" / "settings.json"
@@ -85,6 +87,22 @@ class Settings:
     @jira_api_token.setter
     def jira_api_token(self, value: str) -> None:
         self._data["jira_api_token"] = value.strip()
+
+    @property
+    def output_save_to_folder(self) -> bool:
+        return self._data.get("output_save_to_folder", True)
+
+    @output_save_to_folder.setter
+    def output_save_to_folder(self, value: bool) -> None:
+        self._data["output_save_to_folder"] = value
+
+    @property
+    def output_upload_to_jira(self) -> bool:
+        return self._data.get("output_upload_to_jira", False)
+
+    @output_upload_to_jira.setter
+    def output_upload_to_jira(self, value: bool) -> None:
+        self._data["output_upload_to_jira"] = value
 
     @property
     def jira_configured(self) -> bool:

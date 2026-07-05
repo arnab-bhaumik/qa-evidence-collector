@@ -54,6 +54,16 @@ class SettingsDialog(QDialog):
         dir_row.addWidget(browse_btn)
 
         output_form.addRow("Save location:", dir_row)
+
+        self.save_to_folder_cb = QCheckBox("Save report to folder")
+        self.upload_to_jira_cb = QCheckBox("Upload report to Jira")
+        output_form.addRow(self.save_to_folder_cb)
+        output_form.addRow(self.upload_to_jira_cb)
+
+        output_hint = QLabel("At least one option must be selected.")
+        output_hint.setStyleSheet("color: #6c757d; font-size: 11px;")
+        output_form.addRow(output_hint)
+
         layout.addWidget(output_group)
 
         # --- Hotkey ---
@@ -143,6 +153,9 @@ class SettingsDialog(QDialog):
         self.hotkey_enabled_cb.setChecked(self._settings.hotkey_enabled)
         self.hotkey_input.setEnabled(self._settings.hotkey_enabled)
 
+        self.save_to_folder_cb.setChecked(self._settings.output_save_to_folder)
+        self.upload_to_jira_cb.setChecked(self._settings.output_upload_to_jira)
+
         self.jira_url_input.setText(self._settings.jira_url)
         self.jira_project_input.setText(self._settings.jira_project_key)
         self.jira_email_input.setText(self._settings.jira_email)
@@ -176,9 +189,22 @@ class SettingsDialog(QDialog):
         self._conn_status.setText(message)
 
     def _save(self) -> None:
+        save_to_folder = self.save_to_folder_cb.isChecked()
+        upload_to_jira = self.upload_to_jira_cb.isChecked()
+        if not save_to_folder and not upload_to_jira:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "Output Options",
+                "Please select at least one output option:\n"
+                "Save to folder or Upload to Jira."
+            )
+            return
+
         self._settings.output_dir = self.dir_input.text().strip()
         self._settings.capture_hotkey = self.hotkey_input.text().strip()
         self._settings.hotkey_enabled = self.hotkey_enabled_cb.isChecked()
+        self._settings.output_save_to_folder = save_to_folder
+        self._settings.output_upload_to_jira = upload_to_jira
 
         self._settings.jira_url = self.jira_url_input.text().strip()
         self._settings.jira_project_key = self.jira_project_input.text().strip()
