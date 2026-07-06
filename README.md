@@ -1,6 +1,6 @@
 # QA Evidence Collector
 
-A Windows desktop application for QA/SDET professionals to capture, annotate, organize, and document manual test execution evidence — and automatically generate a formatted Word (.docx) report.
+A Windows desktop application for QA/SDET professionals to capture, annotate, organize, and document manual test execution evidence — automatically generate a formatted Word (.docx) report and upload it directly to Jira.
 
 ## Features
 
@@ -17,13 +17,23 @@ A Windows desktop application for QA/SDET professionals to capture, annotate, or
 
 ### Image Annotation (V1.1)
 - **Arrow tool** — click and drag to draw directional arrows pointing at UI elements
-- **Text tool** — click anywhere to place text labels; auto-contrast background (black/white) based on image brightness; double-click to edit; draggable
+- **Text tool** — click anywhere to place text labels; auto-contrast background; double-click to edit; draggable
 - **Highlight tool** — drag to draw semi-transparent coloured rectangles; 8-handle resize
 - **Blur tool** — drag to pixelate/blur regions containing sensitive data; 8-handle resize
 - **Colour picker** — single colour selector applies to Arrow and Highlight tools; persists across steps
 - **Undo / Clear** — step-by-step undo or clear all annotations at once
 - **Zoom controls** — Ctrl+scroll wheel zoom, Fit and 100% buttons
 - **Test Result** — select Pass or Fail before generating the report; shown in colour on the report title page
+
+### Jira Integration (V1.2)
+- **Jira Configuration** in Settings — URL, Project Key, Email, API Token
+- **Test Connection** button — validates credentials live before saving
+- **Output options** — choose Save to folder, Upload to Jira, or both
+- **Upload to Jira** button — appears on toolbar when Jira is configured
+- **Issue Key + Comment dialog** — enter the Jira issue key and an optional comment
+- Report attached to the Jira issue; comment posted to the activity feed
+- **Clickable link** in success message opens the Jira issue in the browser
+- When Jira-only output is selected, local files are cleaned up after upload to save disk space
 
 ## Download
 
@@ -39,7 +49,8 @@ Grab the latest `QAEvidenceCollector.exe` from the [`dist/`](dist/) folder or th
 6. Enter a note for the step and click **Save**
 7. Repeat steps 3–6 for each test step
 8. Click **View Steps** to review, reorder, edit notes, or delete steps
-9. Click **Generate Report** — select **Pass** or **Fail**, then a formatted `.docx` report is saved and can be opened immediately
+9. Click **Generate Report** — select **Pass** or **Fail**
+10. Report is saved to folder and/or uploaded to Jira depending on your Settings
 
 ## Report Output
 
@@ -104,26 +115,28 @@ Output: `dist\QAEvidenceCollector.exe`
 ```
 qa-evidence-collector/
 ├── src/qa_evidence_collector/
-│   ├── ui/               # PySide6 windows and dialogs
+│   ├── ui/
 │   │   ├── toolbar.py              # Floating always-on-top toolbar
 │   │   ├── annotation_editor.py    # Image annotation canvas and tools
 │   │   ├── new_session_dialog.py   # New session form
 │   │   ├── note_dialog.py          # Per-step note entry
 │   │   ├── step_list_view.py       # Step gallery with edit/reorder/delete
 │   │   ├── test_result_dialog.py   # Pass / Fail selector dialog
+│   │   ├── issue_key_dialog.py     # Jira issue key + comment dialog
 │   │   └── settings_dialog.py      # Settings UI
-│   ├── core/             # Business logic
+│   ├── core/
 │   │   ├── session_manager.py      # Session state and step management
 │   │   ├── step.py                 # Step data model
 │   │   └── hotkey_manager.py       # Global hotkey listener
-│   ├── services/         # External integrations
+│   ├── services/
 │   │   ├── screenshot_service.py   # Screen capture using mss
 │   │   ├── report_service.py       # DOCX generation using python-docx
+│   │   ├── jira_service.py         # Jira API — upload, comment, test connection
 │   │   └── storage_service.py      # Session auto-save/load (JSON)
 │   ├── config/
 │   │   └── settings.py             # App settings persistence
 │   └── resources/icons/            # SVG icons
-├── docs/                 # Project documentation
+├── docs/                           # Project documentation
 ├── qa_evidence_collector.spec      # PyInstaller build spec
 ├── requirements.txt
 └── pyproject.toml
@@ -140,9 +153,20 @@ qa-evidence-collector/
 | Report | python-docx |
 | Image processing | Pillow |
 | Global hotkeys | pynput |
+| Jira API | requests |
 | Packaging | PyInstaller |
 
 ## Version History
+
+### V1.2 — Jira Integration
+| Sprint | Deliverable |
+|--------|-------------|
+| S1 | Jira config section in Settings (URL, Project Key, Email, API Token) |
+| S2 | Test Connection button — validates credentials live |
+| S3 | Output checkboxes (Save to folder / Upload to Jira) |
+| S4 | Upload to Jira button + Issue Key + Comment dialog |
+| S5 | Jira upload service — attach DOCX, post comment, clickable link |
+| S6 | Polish, error handling, rebuild `.exe` |
 
 ### V1.1 — Image Annotation
 | Sprint | Deliverable |
@@ -174,8 +198,7 @@ qa-evidence-collector/
 
 | Version | Feature |
 |---------|---------|
-| V1.2 | PDF export option in addition to DOCX |
-| V2.0 | Jira / TestRail integration |
+| V2.0 | Jira / TestRail deeper integration (create issues, update test status) |
 | V2.1 | Cloud sync for session backup |
 | V2.2 | macOS / Linux builds |
 | V3.0 | Team / shared workspace mode |

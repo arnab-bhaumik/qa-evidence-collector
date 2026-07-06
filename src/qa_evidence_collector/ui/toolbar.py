@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,
 )
-from PySide6.QtCore import Qt, QPoint, QTimer, Signal
+from PySide6.QtCore import Qt, QPoint, QTimer, Signal, QThread
 from PySide6.QtGui import QColor
 
 from qa_evidence_collector.config.settings import Settings
@@ -15,7 +15,40 @@ from qa_evidence_collector.ui.step_list_view import StepListView
 from qa_evidence_collector.ui.settings_dialog import SettingsDialog
 from qa_evidence_collector.ui.annotation_editor import AnnotationEditor
 from qa_evidence_collector.ui.test_result_dialog import TestResultDialog
+from qa_evidence_collector.ui.issue_key_dialog import IssueKeyDialog
 from qa_evidence_collector.services.storage_service import StorageService
+from qa_evidence_collector.services.jira_service import JiraService
+
+
+class _JiraUploadThread(QThread):
+    upload_done = Signal(bool, str)   # (success, issue_url_or_error)
+    comment_done = Signal(bool, str)
+
+    def __init__(self, settings, issue_key: str, file_path: str, comment: str) -> None:
+        super().__init__()
+        self._settings = settings
+        self._issue_key = issue_key
+        self._file_path = file_path
+        self._comment = comment
+
+    def run(self) -> None:
+        svc = JiraService()
+        ok, result = svc.upload_attachment(
+            self._settings.jira_url,
+            self._settings.jira_email,
+            self._settings.jira_api_token,
+            self._issue_key,
+            self._file_path,
+        )
+        self.upload_done.emit(ok, result)
+        if ok and self._comment:
+            svc.post_comment(
+                self._settings.jira_url,
+                self._settings.jira_email,
+                self._settings.jira_api_token,
+                self._issue_key,
+                self._comment,
+            )
 
 
 class FloatingToolbar(QWidget):
@@ -31,6 +64,8 @@ class FloatingToolbar(QWidget):
         self._hotkey_mgr = HotkeyManager()
         self._hotkey_triggered.connect(self._on_capture_step)
         self._last_annotation_colour = QColor("#FF3B30")
+        self._last_report_path: str = ""
+        self._keep_local_file: bool = True
         self._apply_hotkey()
 
         self._drag_pos: QPoint | None = None
@@ -42,7 +77,7 @@ class FloatingToolbar(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         self.setFixedHeight(64)
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(520)
 
         self._build_ui()
         self._apply_style()
@@ -87,6 +122,9 @@ class FloatingToolbar(QWidget):
         self.btn_steps.setEnabled(False)
         self.btn_report = self._make_button("Generate Report", "#e67e22")
         self.btn_report.setEnabled(False)
+        self.btn_upload_jira = self._make_button("Upload to Jira", "#1565c0")
+        self.btn_upload_jira.setEnabled(False)
+        self.btn_upload_jira.setVisible(False)
         self.btn_settings = self._make_button("Settings", "#7f8c8d")
 
         for btn in (
@@ -94,6 +132,7 @@ class FloatingToolbar(QWidget):
             self.btn_capture,
             self.btn_steps,
             self.btn_report,
+            self.btn_upload_jira,
             self.btn_settings,
         ):
             btn_layout.addWidget(btn)
@@ -105,6 +144,7 @@ class FloatingToolbar(QWidget):
         self.btn_capture.clicked.connect(self._on_capture_step)
         self.btn_steps.clicked.connect(self._on_view_steps)
         self.btn_report.clicked.connect(self._on_generate_report)
+        self.btn_upload_jira.clicked.connect(self._on_upload_to_jira)
         self.btn_settings.clicked.connect(self._on_settings)
 
     def _make_button(self, label: str, color: str) -> QPushButton:
@@ -263,17 +303,77 @@ class FloatingToolbar(QWidget):
             QMessageBox.critical(self, "Report Failed", str(exc))
             return
 
+        self._last_report_path = path
+        self._keep_local_file = self._settings.output_save_to_folder
         self._storage_svc.clear()
+        self._update_button_states()
 
-        result = QMessageBox.information(
-            self,
-            "Report Generated",
-            f"Report saved to:\n{path}\n\nOpen it now?",
-            QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Close,
+        if self._settings.output_save_to_folder:
+            result = QMessageBox.information(
+                self,
+                "Report Generated",
+                f"Report saved to:\n{path}\n\nOpen it now?",
+                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Close,
+            )
+            if result == QMessageBox.StandardButton.Open:
+                import os
+                os.startfile(path)
+
+        # Auto-open upload dialog if only Jira upload is selected
+        if self._settings.output_upload_to_jira and not self._settings.output_save_to_folder:
+            self._on_upload_to_jira()
+
+    def _on_upload_to_jira(self) -> None:
+        if not self._last_report_path:
+            QMessageBox.warning(self, "No Report", "Generate a report first before uploading to Jira.")
+            return
+
+        dialog = IssueKeyDialog(self._last_report_path, self)
+        if not dialog.exec():
+            return
+
+        issue_key = dialog.issue_key()
+        comment   = dialog.comment()
+
+        # Disable button, show uploading state
+        self.btn_upload_jira.setEnabled(False)
+        self.btn_upload_jira.setText("Uploading…")
+
+        self._upload_thread = _JiraUploadThread(
+            self._settings, issue_key, self._last_report_path, comment
         )
-        if result == QMessageBox.StandardButton.Open:
-            import os
-            os.startfile(path)
+        self._upload_thread.upload_done.connect(
+            lambda ok, result: self._on_upload_done(ok, result, issue_key)
+        )
+        self._upload_thread.start()
+
+    def _on_upload_done(self, success: bool, result: str, issue_key: str) -> None:
+        self.btn_upload_jira.setEnabled(True)
+        self.btn_upload_jira.setText("Upload to Jira")
+
+        if success:
+            # Delete entire session folder if user chose Jira-only output
+            if not self._keep_local_file:
+                import shutil
+                from pathlib import Path
+                session_folder = Path(self._last_report_path).parent
+                shutil.rmtree(session_folder, ignore_errors=True)
+                self._last_report_path = ""
+                self._update_button_states()
+
+            issue_url = result
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Uploaded Successfully")
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setText(
+                f"Report uploaded to <b>{issue_key}</b> successfully.\n\n"
+                f"<a href='{issue_url}'>{issue_url}</a>"
+            )
+            msg.setTextFormat(Qt.TextFormat.RichText)
+            msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg.exec()
+        else:
+            QMessageBox.critical(self, "Upload Failed", result)
 
     def _on_view_steps(self) -> None:
         dialog = StepListView(self._session, self)
@@ -286,6 +386,7 @@ class FloatingToolbar(QWidget):
         if dialog.exec():
             self._screenshot_svc.set_output_dir(self._settings.output_dir)
             self._apply_hotkey()
+            self._update_button_states()
 
     def _apply_hotkey(self) -> None:
         self._hotkey_mgr.unregister()
@@ -307,6 +408,16 @@ class FloatingToolbar(QWidget):
         self.btn_capture.setEnabled(active)
         self.btn_steps.setEnabled(active and len(self._session.steps) > 0)
         self.btn_report.setEnabled(active and len(self._session.steps) > 0)
+
+        show_jira = (
+            self._settings.jira_configured
+            and self._settings.output_upload_to_jira
+        )
+        self.btn_upload_jira.setVisible(show_jira)
+        self.btn_upload_jira.setEnabled(show_jira and bool(self._last_report_path))
+        target_width = 640 if show_jira else 520
+        self.setMinimumWidth(target_width)
+        self.resize(target_width, self.height())
 
     # ------------------------------------------------------------------
     # Drag to move
